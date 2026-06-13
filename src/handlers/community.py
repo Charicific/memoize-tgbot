@@ -54,7 +54,7 @@ async def cmd_battle(message: Message, command: CommandObject):
     # Challenger must be linked
     challenger_link = await db.get_linked_account(user_id)
     if not challenger_link or not challenger_link["verified"]:
-        await message.reply("⚠️ You must link and verify your own LeetCode account first using `/link <username>`!")
+        await message.reply(f"⚠️ You must link and verify your own LeetCode account first using {html.code('/link <username>')}!", parse_mode="HTML")
         return
 
     if not command.args:

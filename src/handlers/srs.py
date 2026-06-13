@@ -23,7 +23,7 @@ async def cmd_solved(message: Message, command: CommandObject):
     # Check if LeetCode is linked
     link = await db.get_linked_account(user_id)
     if not link or not link["verified"]:
-        await message.reply("⚠️ You must link and verify your LeetCode account first using `/link <username>`!")
+        await message.reply(f"⚠️ You must link and verify your LeetCode account first using {html.code('/link <username>')}!", parse_mode="HTML")
         return
 
     leetcode_username = link["leetcode_username"]

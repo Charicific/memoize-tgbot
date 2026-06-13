@@ -44,10 +44,7 @@ async def cmd_daily(message: Message):
     tags = [t["name"] for t in question["topicTags"]]
     link = f"https://leetcode.com{daily['link']}"
 
-    clean_description = clean_leetcode_html(content)
-    # Truncate long descriptions to fit Telegram message limit (4096 chars)
-    if len(clean_description) > 2000:
-        clean_description = clean_description[:2000] + "\n\n...[Description truncated. Click the link to read more]..."
+    clean_description = clean_leetcode_html(content, max_length=2000)
 
     diff_emoji = "🟢" if difficulty == "Easy" else "🟡" if difficulty == "Medium" else "🔴"
     
