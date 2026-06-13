@@ -15,7 +15,7 @@ class SupabaseDB:
             try:
                 # Direct PostgreSQL connection pool (asyncpg requires postgresql:// scheme)
                 dsn = settings.SUPABASE_DB_URL.replace("postgresql+asyncpg://", "postgresql://")
-                self.pool = await asyncpg.create_pool(dsn)
+                self.pool = await asyncpg.create_pool(dsn, ssl='require')
                 logger.info("Database connection pool established.")
             except Exception as e:
                 logger.error(f"Failed to connect to database: {e}")
