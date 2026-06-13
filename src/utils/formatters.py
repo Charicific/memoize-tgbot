@@ -4,11 +4,27 @@ from io import StringIO
 from typing import Optional
 
 class TelegramHTMLParser(HTMLParser):
+    # Map HTML tags to Telegram-supported equivalents
+    TAG_MAP = {
+        "strong": "b",
+        "em": "i",
+        "ins": "u",
+        "strike": "s",
+        "del": "s",
+        # Pass-through tags already supported by Telegram
+        "b": "b",
+        "i": "i",
+        "u": "u",
+        "s": "s",
+        "code": "code",
+        "pre": "pre",
+        "a": "a",
+    }
+
     def __init__(self, max_length: Optional[int] = None):
         super().__init__()
         self.output = StringIO()
-        self.supported_tags = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "a"}
-        self.active_tags = []
+        self.active_tags = []  # stores the *mapped* tag names
         self.max_length = max_length
         self.truncated = False
 
@@ -22,22 +38,25 @@ class TelegramHTMLParser(HTMLParser):
             self.output.write("\n")
         elif tag == "li":
             self.output.write("• ")
-        elif tag in self.supported_tags:
-            # Reconstruct tag with attributes if any (like href for <a>)
+        elif tag in self.TAG_MAP:
+            mapped = self.TAG_MAP[tag]
             attr_str = ""
-            if tag == "a":
+            if mapped == "a":
                 href = next((val for name, val in attrs if name == "href"), None)
                 if href:
                     attr_str = f' href="{href}"'
-            self.output.write(f"<{tag}{attr_str}>")
-            self.active_tags.append(tag)
+            self.output.write(f"<{mapped}{attr_str}>")
+            self.active_tags.append(mapped)
 
     def handle_endtag(self, tag):
         tag = tag.lower()
-        if tag in self.supported_tags:
-            if tag in self.active_tags:
-                self.output.write(f"</{tag}>")
-                self.active_tags.remove(tag)
+        if tag in self.TAG_MAP:
+            mapped = self.TAG_MAP[tag]
+            if mapped in self.active_tags:
+                self.output.write(f"</{mapped}>")
+                # Remove the last occurrence (handles nested same tags)
+                idx = len(self.active_tags) - 1 - self.active_tags[::-1].index(mapped)
+                self.active_tags.pop(idx)
         elif not self.truncated:
             if tag == "p":
                 self.output.write("\n")

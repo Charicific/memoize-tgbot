@@ -9,8 +9,18 @@ logger = logging.getLogger(__name__)
 
 class RedisCacheManager:
     def __init__(self):
-        # Initialize the redis client from connection URL
-        self.client: Redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        # Initialize the redis client from connection URL.
+        # health_check_interval keeps the TLS connection to Upstash alive on Windows
+        # (prevents WinError 121 / semaphore timeout on idle sockets).
+        self.client: Redis = Redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_keepalive=True,
+            socket_timeout=10,
+            socket_connect_timeout=10,
+            retry_on_timeout=True,
+            health_check_interval=30,   # ping every 30s to prevent idle disconnects
+        )
         # Create aiogram FSM storage using the same redis client
         self.fsm_storage = RedisStorage(self.client)
 

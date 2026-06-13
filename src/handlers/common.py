@@ -32,7 +32,7 @@ async def cmd_start(message: Message):
         "I will help you build discipline, track your spaced repetition reviews, compete with friends, "
         "and get AI help right inside Telegram.\n\n"
         f"🚀 {html.bold('Get started:')}\n"
-        f"1. Link your LeetCode profile: {html.code('/link <username>')}\n"
+        f"1. Link your LeetCode profile: {html.code('/link &lt;username&gt;')}\n"
         "2. Add the verification code to your LeetCode bio.\n"
         "3. Run `/verify` to complete linking!\n\n"
         "Type `/help` to see all available commands."
@@ -44,7 +44,7 @@ async def cmd_help(message: Message):
     help_text = (
         f"📚 {html.bold('Available Commands:')}\n\n"
         f"⚙️ {html.bold('Profile & Accounts:')}\n"
-        f"• {html.code('/link <leetcode_username>')} — Link your LeetCode account\n"
+        f"• {html.code('/link &lt;leetcode_username&gt;')} — Link your LeetCode account\n"
         "• `/verify` — Verify ownership via LeetCode bio\n"
         "• `/profile` — View your progress, XP, coins, and LeetCode stats\n\n"
         f"⚔️ {html.bold('Practice & Competitions:')}\n"
@@ -53,11 +53,11 @@ async def cmd_help(message: Message):
         "• `/contest` — Check upcoming contests and schedule alerts\n"
         "• `/battle @username` — Challenge a friend to a LeetCode battle\n\n"
         f"🧠 {html.bold('Spaced Repetition (SRS):')}\n"
-        f"• {html.code('/solved <problem_slug> <quality>')} — Log a problem solved & schedule review (quality: 0=forgot, 5=perfect)\n\n"
+        f"• {html.code('/solved &lt;problem_slug&gt; &lt;quality&gt;')} — Log a problem solved & schedule review (quality: 0=forgot, 5=perfect)\n\n"
         f"🤖 {html.bold('AI Features:')}\n"
-        f"• {html.code('/hint <problem_slug>')} — Get progressive hints (Llama 3.3)\n"
-        f"• {html.code('/analyze <paste_code>')} — Time/space complexity analysis (Llama 3.3)\n"
-        f"• {html.code('/review <paste_code>')} — Full structural code review (Gemini Flash 2.0)"
+        f"• {html.code('/hint &lt;problem_slug&gt;')} — Get progressive hints (Llama 3.3)\n"
+        f"• {html.code('/analyze &lt;paste_code&gt;')} — Time/space complexity analysis (Llama 3.3)\n"
+        f"• {html.code('/review &lt;paste_code&gt;')} — Full structural code review (Gemini Flash 2.0)"
     )
     await message.reply(help_text, parse_mode="HTML")
 
@@ -106,7 +106,7 @@ async def cmd_verify(message: Message):
 
     link = await db.get_linked_account(user_id)
     if not link:
-        await message.reply(f"⚠️ You haven't requested to link an account yet. Run {html.code('/link <username>')} first.", parse_mode="HTML")
+        await message.reply(f"⚠️ You haven't requested to link an account yet. Run {html.code('/link &lt;username&gt;')} first.", parse_mode="HTML")
         return
 
     if link["verified"]:
@@ -196,7 +196,7 @@ async def cmd_profile(message: Message):
             # Cache for 10 minutes
             await cache_manager.set(cache_key, leetcode_stats_str, expire_seconds=600)
     else:
-        leetcode_stats_str = f"\n\n⚠️ {html.bold('LeetCode Account')} not linked or verified.\nUse {html.code('/link <username>')} to connect."
+        leetcode_stats_str = f"\n\n⚠️ {html.bold('LeetCode Account')} not linked or verified.\nUse {html.code('/link &lt;username&gt;')} to connect."
 
     profile_text = (
         f"👤 {html.bold('User Profile')}:\n"
