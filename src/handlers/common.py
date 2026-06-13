@@ -91,7 +91,7 @@ async def cmd_link(message: Message, command: CommandObject):
         f"🔗 {html.bold('Linking Request Received!')}\n\n"
         f"LeetCode Account: {html.bold(leetcode_username)}\n"
         f"Verification Code: {html.code(code)}\n\n"
-        f"👉 To complete verification, please update your LeetCode profile biography/About Me section to contain your verification code: {html.code(code)}\n\n"
+        f"👉 To complete verification, please update your LeetCode profile Read me section to contain your verification code: {html.code(code)}\n\n"
         f"Once you've done that, run the command:\n`/verify` to complete linking."
     )
     await message.reply(instructions, parse_mode="HTML")
