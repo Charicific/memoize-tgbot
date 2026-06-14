@@ -19,7 +19,63 @@ async def cmd_leaderboard(message: Message):
         await message.reply("Slow down. Caching leaderboard...")
         return
 
-    # Check cache
+    chat_type = message.chat.type
+    if chat_type == "private":
+        # Global leaderboard
+        cache_key = "global_leaderboard"
+        cached = await cache_manager.get(cache_key)
+        if cached:
+            await message.reply(cached, parse_mode="HTML")
+            return
+
+        users = await db.get_global_leaderboard(limit=10)
+        if not users:
+            await message.reply("🏆 No users on the global leaderboard yet. Solve problems to get listed!")
+            return
+
+        response = f"🏆 {html.bold('LeetCode Companion Global Leaderboard')} 🏆\n\n"
+        for rank, u in enumerate(users, start=1):
+            name = u['first_name'] or u['username'] or f"User {u['telegram_id']}"
+            username_str = f" (@{u['username']})" if u['username'] else ""
+            medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
+            response += f"{medal} {html.bold(name)}{username_str}\n   ✨ Level {u['level']} • {u['xp']} XP • {u['coins']} coins\n\n"
+
+        await cache_manager.set(cache_key, response, expire_seconds=300)
+        await message.reply(response, parse_mode="HTML")
+    else:
+        # Group leaderboard
+        group_id = message.chat.id
+        group_title = message.chat.title or "this Group"
+        cache_key = f"group_leaderboard:{group_id}"
+        cached = await cache_manager.get(cache_key)
+        if cached:
+            await message.reply(cached, parse_mode="HTML")
+            return
+
+        users = await db.get_group_leaderboard(group_id, limit=10)
+        if not users:
+            await message.reply("🏆 No active users on this group's leaderboard yet. Send messages or compete to get listed!")
+            return
+
+        response = f"🏆 {html.bold(f'{group_title} Leaderboard')} 🏆\n\n"
+        for rank, u in enumerate(users, start=1):
+            name = u['first_name'] or u['username'] or f"User {u['telegram_id']}"
+            username_str = f" (@{u['username']})" if u['username'] else ""
+            medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
+            response += f"{medal} {html.bold(name)}{username_str}\n   ✨ Level {u['level']} • {u['xp']} XP • {u['coins']} coins\n\n"
+
+        await cache_manager.set(cache_key, response, expire_seconds=300)
+        await message.reply(response, parse_mode="HTML")
+
+
+@router.message(Command("gleaderboard"))
+async def cmd_gleaderboard(message: Message):
+    user_id = message.from_user.id
+    if await cache_manager.is_rate_limited(user_id, "gleaderboard", limit=5, period=10):
+        await message.reply("Slow down. Caching leaderboard...")
+        return
+
+    # Always show global leaderboard
     cache_key = "global_leaderboard"
     cached = await cache_manager.get(cache_key)
     if cached:
@@ -28,19 +84,19 @@ async def cmd_leaderboard(message: Message):
 
     users = await db.get_global_leaderboard(limit=10)
     if not users:
-        await message.reply("🏆 No users on the leaderboard yet. Solve problems to get listed!")
+        await message.reply("🏆 No users on the global leaderboard yet. Solve problems to get listed!")
         return
 
-    response = f"🏆 {html.bold('LeetCode Companion Leaderboard')} 🏆\n\n"
+    response = f"🏆 {html.bold('LeetCode Companion Global Leaderboard')} 🏆\n\n"
     for rank, u in enumerate(users, start=1):
         name = u['first_name'] or u['username'] or f"User {u['telegram_id']}"
         username_str = f" (@{u['username']})" if u['username'] else ""
         medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
         response += f"{medal} {html.bold(name)}{username_str}\n   ✨ Level {u['level']} • {u['xp']} XP • {u['coins']} coins\n\n"
 
-    # Cache for 5 minutes
     await cache_manager.set(cache_key, response, expire_seconds=300)
     await message.reply(response, parse_mode="HTML")
+
 
 
 @router.message(Command("battle"))

@@ -1,17 +1,22 @@
 import random
 import logging
+import time
+from html import escape as html_escape
 from aiogram import Router, html
+
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import Message, ChatMemberUpdated
 from src.services.supabase_db import db
 from src.services.leetcode import LeetCodeClient
 from src.services.redis_cache import cache_manager
+from src.utils.logging_helper import send_log
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 # Reusable client instanced locally or dynamically
 leetcode_client = LeetCodeClient()
+
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
@@ -24,8 +29,25 @@ async def cmd_start(message: Message):
         await message.reply("Please don't spam. Wait a few seconds.")
         return
 
+    # Check if user already exists
+    existing_user = await db.get_user(user_id)
+
     # Create user in database
     await db.create_user(user_id, username, first_name)
+
+    # Log new user starting the bot
+    if not existing_user:
+        user_link = f"tg://user?id={user_id}"
+        mention = f"<a href='{user_link}'>{html_escape(first_name or 'User')}</a>"
+        if username:
+            mention += f" (@{html_escape(username)})"
+
+        log_text = (
+            f"🆕 {html.bold('New User Started Bot')}\n\n"
+            f"👤 {html.bold('User:')} {mention}\n"
+            f"🆔 {html.bold('Telegram ID:')} {html.code(user_id)}"
+        )
+        await send_log(log_text)
 
     welcome_text = (
         f"👋 Welcome {html.bold(first_name or 'there')} to the {html.bold('LeetCode Companion Bot')}!\n\n"
@@ -33,11 +55,12 @@ async def cmd_start(message: Message):
         "and get AI help right inside Telegram.\n\n"
         f"🚀 {html.bold('Get started:')}\n"
         f"1. Link your LeetCode profile: {html.code('/link &lt;username&gt;')}\n"
-        "2. Add the verification code to your LeetCode bio.\n"
+        "2. Add the verification code to your LeetCode profile ReadMe.\n"
         "3. Run `/verify` to complete linking!\n\n"
         "Type `/help` to see all available commands."
     )
     await message.reply(welcome_text, parse_mode="HTML")
+
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
@@ -51,41 +74,119 @@ async def cmd_help(message: Message):
         "• `/daily` — Fetch today's LeetCode challenge\n"
         "• `/random [difficulty] [tag]` — Get a random problem (e.g. `/random medium dp`)\n"
         "• `/contest` — Check upcoming contests and schedule alerts\n"
-        "• `/battle @username` — Challenge a friend to a LeetCode battle\n\n"
+        "• `/battle @username` — Challenge a friend to a LeetCode battle\n"
+        "• `/leaderboard` — View the leaderboard (group-exclusive in groups, global in DM)\n"
+        "• `/gleaderboard` — View the global top 10 leaderboard\n\n"
+
         f"🧠 {html.bold('Spaced Repetition (SRS):')}\n"
         f"• {html.code('/solved &lt;problem_slug&gt; &lt;quality&gt;')} — Log a problem solved & schedule review (quality: 0=forgot, 5=perfect)\n\n"
         f"🤖 {html.bold('AI Features:')}\n"
         f"• {html.code('/hint &lt;problem_slug&gt;')} — Get progressive hints (Llama 3.3)\n"
         f"• {html.code('/analyze &lt;paste_code&gt;')} — Time/space complexity analysis (Llama 3.3)\n"
-        f"• {html.code('/review &lt;paste_code&gt;')} — Full structural code review (Gemini Flash 2.0)"
+        f"• {html.code('/review &lt;paste_code&gt;')} — Full structural code review (Gemini Flash 2.0)\n\n"
+        f"🛠️ {html.bold('Utility:')}\n"
+        "• `/ping` — Measure bot response speed & DB latency\n"
+        "• `/stats` — View bot usage and statistics"
     )
     await message.reply(help_text, parse_mode="HTML")
+
+
+@router.message(Command("ping"))
+async def cmd_ping(message: Message):
+    # Measure DB latency
+    start_db = time.time()
+    try:
+        await db.fetchrow("SELECT 1")
+        db_latency = f"{int((time.time() - start_db) * 1000)}ms"
+    except Exception as e:
+        db_latency = f"Error ({e})"
+
+    # Measure Telegram API latency
+    start_tg = time.time()
+    sent_msg = await message.reply("🏓 Ponging...")
+    tg_latency = int((time.time() - start_tg) * 1000)
+
+    # Edit message with final metrics
+    status_text = (
+        f"🏓 {html.bold('Pong!')}\n\n"
+        f"⚡ {html.bold('Telegram Bot API:')} {tg_latency}ms\n"
+        f"💾 {html.bold('Database Latency:')} {db_latency}"
+    )
+    await sent_msg.edit_text(status_text, parse_mode="HTML")
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    try:
+        stats = await db.get_bot_stats()
+    except Exception as e:
+        logger.error(f"Error executing stats query: {e}")
+        await message.reply("❌ Error retrieving statistics. Please try again later.")
+        return
+
+    stats_text = (
+        f"📊 {html.bold('Memoize Bot Statistics')}\n\n"
+        f"👤 {html.bold('Users:')}\n"
+        f"• Total registered users: {html.bold(stats['total_users'])}\n"
+        f"• Linked LeetCode profiles: {html.bold(stats['total_linked'])}\n"
+        f"• Verified LeetCode profiles: {html.bold(stats['total_verified'])}\n\n"
+        f"⚔️ {html.bold('LeetCode Battles:')}\n"
+        f"• Total battles: {html.bold(stats['total_battles'])}\n"
+        f"• Active/Pending: {html.bold(stats['active_battles'])}\n"
+        f"• Completed: {html.bold(stats['completed_battles'])}\n\n"
+        f"🧠 {html.bold('Practice & SRS:')}\n"
+        f"• Total solved problems: {html.bold(stats['total_solved'])}\n"
+        f"• Active Spaced Repetition items: {html.bold(stats['total_srs'])}"
+    )
+    await message.reply(stats_text, parse_mode="HTML")
+
 
 @router.message(Command("link"))
 async def cmd_link(message: Message, command: CommandObject):
     user_id = message.from_user.id
-    
+
     if await cache_manager.is_rate_limited(user_id, "link", limit=3, period=10):
         await message.reply("Please wait a moment before trying again.")
         return
 
     if not command.args:
-        await message.reply("⚠️ Please provide your LeetCode username:\nExample: `/link username`", parse_mode="HTML")
+        await message.reply(
+            "⚠️ Please provide your LeetCode username:\nExample: `/link username`",
+            parse_mode="HTML",
+        )
         return
 
     leetcode_username = command.args.strip()
-    
+
     # Generate verification code
     code = f"LC-{random.randint(1000, 9999)}"
-    
+
     # Check if LeetCode user exists
     profile = await leetcode_client.get_user_profile(leetcode_username)
     if not profile:
-        await message.reply(f"❌ Could not find a LeetCode user with username: {html.code(leetcode_username)}.\nMake sure you typed it correctly.", parse_mode="HTML")
+        await message.reply(
+            f"❌ Could not find a LeetCode user with username: {html.code(leetcode_username)}.\nMake sure you typed it correctly.",
+            parse_mode="HTML",
+        )
         return
 
     # Link in database (unverified)
     await db.link_leetcode_account(user_id, leetcode_username, code)
+
+    # Log linking request
+    user_link = f"tg://user?id={user_id}"
+    mention = f"<a href='{user_link}'>{html_escape(message.from_user.first_name or 'User')}</a>"
+    if message.from_user.username:
+        mention += f" (@{html_escape(message.from_user.username)})"
+
+    log_text = (
+        f"🔗 {html.bold('LeetCode Link Requested')}\n\n"
+        f"👤 {html.bold('User:')} {mention}\n"
+        f"🆔 {html.bold('Telegram ID:')} {html.code(user_id)}\n"
+        f"🖥️ {html.bold('LeetCode Profile:')} <a href='https://leetcode.com/{html_escape(leetcode_username)}'>{html_escape(leetcode_username)}</a>\n"
+        f"🔑 {html.bold('Verification Code:')} {html.code(code)}"
+    )
+    await send_log(log_text)
 
     instructions = (
         f"🔗 {html.bold('Linking Request Received!')}\n\n"
@@ -95,6 +196,7 @@ async def cmd_link(message: Message, command: CommandObject):
         f"Once you've done that, run the command:\n`/verify` to complete linking."
     )
     await message.reply(instructions, parse_mode="HTML")
+
 
 @router.message(Command("verify"))
 async def cmd_verify(message: Message):
@@ -106,7 +208,10 @@ async def cmd_verify(message: Message):
 
     link = await db.get_linked_account(user_id)
     if not link:
-        await message.reply(f"⚠️ You haven't requested to link an account yet. Run {html.code('/link &lt;username&gt;')} first.", parse_mode="HTML")
+        await message.reply(
+            f"⚠️ You haven't requested to link an account yet. Run {html.code('/link &lt;username&gt;')} first.",
+            parse_mode="HTML",
+        )
         return
 
     if link["verified"]:
@@ -120,7 +225,9 @@ async def cmd_verify(message: Message):
 
     profile = await leetcode_client.get_user_profile(leetcode_username)
     if not profile or not profile.get("profile"):
-        await message.reply("❌ Error fetching LeetCode profile. Please try again later.")
+        await message.reply(
+            "❌ Error fetching LeetCode profile. Please try again later."
+        )
         return
 
     bio = profile["profile"].get("aboutMe") or ""
@@ -129,7 +236,21 @@ async def cmd_verify(message: Message):
         await db.verify_leetcode_account(user_id)
         # Reward user with some starting XP & Coins
         await db.add_xp_coins(user_id, xp=50, coins=50)
-        
+
+        # Log verification success
+        user_link = f"tg://user?id={user_id}"
+        mention = f"<a href='{user_link}'>{html_escape(message.from_user.first_name or 'User')}</a>"
+        if message.from_user.username:
+            mention += f" (@{html_escape(message.from_user.username)})"
+
+        log_text = (
+            f"✅ {html.bold('LeetCode Account Verified')}\n\n"
+            f"👤 {html.bold('User:')} {mention}\n"
+            f"🆔 {html.bold('Telegram ID:')} {html.code(user_id)}\n"
+            f"🖥️ {html.bold('LeetCode Profile:')} <a href='https://leetcode.com/{html_escape(leetcode_username)}'>{html_escape(leetcode_username)}</a>"
+        )
+        await send_log(log_text)
+
         success_text = (
             f"🎉 {html.bold('Verification Successful!')}\n\n"
             f"Your LeetCode account {html.bold(leetcode_username)} is now successfully linked to your Telegram profile!\n"
@@ -141,17 +262,20 @@ async def cmd_verify(message: Message):
             f"❌ Verification failed. Could not find verification code {html.code(expected_code)} in your LeetCode biography.\n\n"
             f"Current Biography:\n{html.italic(bio or '[Empty]')}\n\n"
             f"Please ensure you copy the code {html.code(expected_code)} exactly into your biography and run `/verify` again.",
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
+
 
 @router.message(Command("profile"))
 async def cmd_profile(message: Message):
     user_id = message.from_user.id
-    
+
     user_db = await db.get_user(user_id)
     if not user_db:
         # Create user record
-        user_db = await db.create_user(user_id, message.from_user.username, message.from_user.first_name)
+        user_db = await db.create_user(
+            user_id, message.from_user.username, message.from_user.first_name
+        )
 
     # Get cache first
     cache_key = f"profile_stats:{user_id}"
@@ -159,10 +283,10 @@ async def cmd_profile(message: Message):
 
     link = await db.get_linked_account(user_id)
     leetcode_stats_str = ""
-    
+
     if link and link["verified"]:
         leetcode_username = link["leetcode_username"]
-        
+
         if cached_profile:
             leetcode_stats_str = cached_profile
         else:
@@ -172,17 +296,21 @@ async def cmd_profile(message: Message):
             if profile:
                 ranking = profile["profile"].get("ranking", "N/A")
                 submit_stats = profile.get("submitStats", {}).get("acSubmissionNum", [])
-                
-                solved_counts = {item["difficulty"]: item["count"] for item in submit_stats}
+
+                solved_counts = {
+                    item["difficulty"]: item["count"] for item in submit_stats
+                }
                 solved_str = (
                     f"🟢 Easy: {solved_counts.get('Easy', 0)}\n"
                     f"🟡 Medium: {solved_counts.get('Medium', 0)}\n"
                     f"🔴 Hard: {solved_counts.get('Hard', 0)}\n"
                     f"🏆 Total Solved: {solved_counts.get('All', 0)}"
                 )
-            
+
             # Fetch ranking rating if possible
-            ranking_info = await leetcode_client.get_user_contest_ranking(leetcode_username)
+            ranking_info = await leetcode_client.get_user_contest_ranking(
+                leetcode_username
+            )
             contest_str = "N/A"
             if ranking_info:
                 contest_str = f"{int(ranking_info.get('rating', 0))} (Global Rank: {ranking_info.get('globalRanking', 'N/A')})"
@@ -206,5 +334,67 @@ async def cmd_profile(message: Message):
         f"• Coins: {html.bold(user_db.get('coins', 0))}"
         f"{leetcode_stats_str}"
     )
-    
+
     await message.reply(profile_text, parse_mode="HTML")
+
+
+@router.my_chat_member()
+async def on_my_chat_member_update(event: ChatMemberUpdated):
+    old_status = event.old_chat_member.status
+    new_status = event.new_chat_member.status
+    chat_type = event.chat.type
+
+    # Only care about groups/supergroups/channels
+    if chat_type not in ["group", "supergroup", "channel"]:
+        return
+
+    # Check if bot was added
+    was_added = old_status in ["kicked", "left", "restricted"] and new_status in [
+        "member",
+        "administrator",
+    ]
+    # Check if bot was removed
+    was_removed = old_status in ["member", "administrator"] and new_status in [
+        "kicked",
+        "left",
+    ]
+
+    # Retrieve user who made the change
+    actor = event.from_user
+    if not actor:
+        return
+    actor_link = f"tg://user?id={actor.id}"
+    actor_mention = (
+        f"<a href='{actor_link}'>{html_escape(actor.first_name or 'User')}</a>"
+    )
+    if actor.username:
+        actor_mention += f" (@{html_escape(actor.username)})"
+
+    chat_title = event.chat.title or "Unknown Chat"
+    chat_id = event.chat.id
+
+    if was_added:
+        # Get member count if possible
+        member_count = "N/A"
+        try:
+            member_count = await event.bot.get_chat_member_count(chat_id)
+        except Exception:
+            pass
+
+        log_text = (
+            f"➕ {html.bold('Bot Added to New ' + chat_type.capitalize())}\n\n"
+            f"🏷️ {html.bold('Title:')} {html_escape(chat_title)}\n"
+            f"🆔 {html.bold('Chat ID:')} {html.code(chat_id)}\n"
+            f"👥 {html.bold('Member Count:')} {html.code(member_count)}\n"
+            f"👤 {html.bold('Added By:')} {actor_mention}"
+        )
+        await send_log(log_text)
+
+    elif was_removed:
+        log_text = (
+            f"➖ {html.bold('Bot Removed from ' + chat_type.capitalize())}\n\n"
+            f"🏷️ {html.bold('Title:')} {html_escape(chat_title)}\n"
+            f"🆔 {html.bold('Chat ID:')} {html.code(chat_id)}\n"
+            f"👤 {html.bold('Removed By:')} {actor_mention}"
+        )
+        await send_log(log_text)

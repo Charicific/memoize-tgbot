@@ -1,10 +1,15 @@
 import asyncio
 import logging
 import datetime
+import traceback
+from html import escape as html_escape
 from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI, Request
-from aiogram import Bot, Dispatcher, html, types
+from aiogram import Bot, Dispatcher, html, types, BaseMiddleware
+
+from aiogram.types import ErrorEvent
 from aiogram.fsm.storage.redis import RedisStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -14,6 +19,9 @@ from src.services.supabase_db import db
 from src.services.redis_cache import cache_manager
 from src.services.leetcode import LeetCodeClient
 from src.handlers import get_main_router
+from src.utils.formatters import clean_leetcode_html
+
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -23,6 +31,24 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher(storage=cache_manager.fsm_storage)
 leetcode_client = LeetCodeClient()
+
+class GroupMemberMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        if isinstance(event, types.Message) and event.chat.type in ["group", "supergroup"]:
+            if event.from_user:
+                try:
+                    await db.record_group_member(
+                        group_id=event.chat.id,
+                        telegram_id=event.from_user.id,
+                        username=event.from_user.username,
+                        first_name=event.from_user.first_name
+                    )
+                except Exception as e:
+                    logger.error(f"Error in GroupMemberMiddleware: {e}")
+        return await handler(event, data)
+
+dp.message.outer_middleware(GroupMemberMiddleware())
+
 
 # Initialize Scheduler
 # SQLAlchemyJobStore persists jobs into Postgres so they survive restarts
@@ -141,7 +167,17 @@ async def poll_active_battles():
                 except Exception as e:
                     logger.error(f"Error sending battle completed message: {e}")
     except Exception as e:
-        logger.error(f"Error in poll_active_battles: {e}")
+        logger.error(f"Error in poll_active_battles: {e}", exc_info=True)
+        tb = traceback.format_exc()
+        if len(tb) > 2500:
+            tb = tb[:2500] + "\n...[truncated]"
+        error_msg = (
+            f"🚨 {html.bold('CRITICAL: Error in Background Task (poll_active_battles)')} 🚨\n\n"
+            f"⚠️ {html.bold('Error:')} {html.code(str(e))}\n\n"
+            f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
+        )
+        from src.utils.logging_helper import send_log
+        await send_log(error_msg, pin=True, disable_notification=False)
 
 
 async def check_srs_reviews():
@@ -168,7 +204,202 @@ async def check_srs_reviews():
                 except Exception as e:
                     logger.error(f"Failed to send SRS reminder to {user_id}: {e}")
     except Exception as e:
-        logger.error(f"Error checking SRS reviews: {e}")
+        logger.error(f"Error checking SRS reviews: {e}", exc_info=True)
+        tb = traceback.format_exc()
+        if len(tb) > 2500:
+            tb = tb[:2500] + "\n...[truncated]"
+        error_msg = (
+            f"🚨 {html.bold('CRITICAL: Error in Background Task (check_srs_reviews)')} 🚨\n\n"
+            f"⚠️ {html.bold('Error:')} {html.code(str(e))}\n\n"
+            f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
+        )
+        from src.utils.logging_helper import send_log
+        await send_log(error_msg, pin=True, disable_notification=False)
+
+
+async def poll_leetcode_feed():
+    """
+    Background job to poll LeetCode for daily challenge updates and contest alerts.
+    Runs every 5 minutes.
+    """
+    logger.info("Polling LeetCode feed updates...")
+    try:
+        channels = settings.leetcode_feed_channels
+        if not channels:
+            return
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        now_ts = now.timestamp()
+
+        # 1. Process Daily Challenge
+        daily = await leetcode_client.get_daily_challenge()
+        if daily:
+            daily_date = daily["date"]  # Format: "YYYY-MM-DD"
+            cache_key = f"leetcode_feed:daily_posted:{daily_date}"
+            already_posted = await cache_manager.get(cache_key)
+            if not already_posted:
+                question = daily["question"]
+                title = question["title"]
+                difficulty = question["difficulty"]
+                tags = [t["name"] for t in question["topicTags"]]
+                link = f"https://leetcode.com{daily['link']}"
+                diff_emoji = "🟢" if difficulty == "Easy" else "🟡" if difficulty == "Medium" else "🔴"
+                
+                clean_description = clean_leetcode_html(question["content"], max_length=1500)
+                
+                daily_msg = (
+                    f"📅 {html.bold('LeetCode Daily Coding Challenge')} ({daily_date})\n\n"
+                    f"🏆 {html.bold(html_escape(title))}\n"
+                    f"Difficulty: {diff_emoji} {html.bold(html_escape(difficulty))}\n"
+                    f"Tags: {html.italic(', '.join([html_escape(t) for t in tags]))}\n"
+                    f"🔗 Link: <a href='{link}'>Solve on LeetCode</a>\n\n"
+                    f"{html.bold('Description:')}\n"
+                    f"{clean_description}\n\n"
+                    f"💡 {html.italic('To get progressive hints for this problem, type:')}\n"
+                    f"`/hint {question['titleSlug']}` in @MemoizeLC_bot"
+                )
+                
+                for cid in channels:
+                    try:
+                        await bot.send_message(chat_id=cid, text=daily_msg, parse_mode="HTML", disable_web_page_preview=True)
+                    except Exception as e:
+                        logger.error(f"Error sending daily challenge to feed channel {cid}: {e}")
+                
+                await cache_manager.set(cache_key, "1", expire_seconds=172800)
+
+        # 2. Process Contests
+        contests = await leetcode_client.get_contests()
+        for c in contests:
+            slug = c["titleSlug"]
+            title = c["title"]
+            start_time = int(c["startTime"])
+            duration = int(c["duration"])
+            end_time = start_time + duration
+            
+            start_dt = datetime.datetime.fromtimestamp(start_time, tz=datetime.timezone.utc)
+            duration_mins = duration // 60
+            
+            # Registration alert (Contest is upcoming and we haven't alerted yet)
+            if start_time > now_ts:
+                reg_cache_key = f"leetcode_feed:contest_alert_reg:{slug}"
+                reg_posted = await cache_manager.get(reg_cache_key)
+                if not reg_posted:
+                    reg_msg = (
+                        f"📢 {html.bold('New LeetCode Contest Available!')} 🏆\n\n"
+                        f"🎯 {html.bold(html_escape(title))}\n"
+                        f"⏰ {html.bold('Starts:')} {start_dt.strftime('%d %b %Y, %I:%M %p UTC')}\n"
+                        f"⏱️ {html.bold('Duration:')} {duration_mins} minutes\n\n"
+                        f"🔗 <a href='https://leetcode.com/contest/{slug}'>Register here on LeetCode</a>"
+                    )
+                    for cid in channels:
+                        try:
+                            await bot.send_message(chat_id=cid, text=reg_msg, parse_mode="HTML")
+                        except Exception as e:
+                            logger.error(f"Error sending contest reg alert to feed {cid}: {e}")
+                    await cache_manager.set(reg_cache_key, "1", expire_seconds=604800)
+
+                # Today alert (starts in <= 12 hours)
+                time_to_start = start_time - now_ts
+                if time_to_start <= 43200:
+                    today_cache_key = f"leetcode_feed:contest_alert_today:{slug}"
+                    today_posted = await cache_manager.get(today_cache_key)
+                    if not today_posted:
+                        hours_left = int(time_to_start // 3600)
+                        mins_left = int((time_to_start % 3600) // 60)
+                        countdown_str = f"{hours_left}h {mins_left}m" if hours_left > 0 else f"{mins_left}m"
+                        
+                        today_msg = (
+                            f"⚠️ {html.bold('LeetCode Contest Today!')} 🚨\n\n"
+                            f"🏆 {html.bold(html_escape(title))}\n"
+                            f"⏳ {html.bold('Starting in:')} {html.code(countdown_str)}\n"
+                            f"⏰ {html.bold('Start Time:')} {start_dt.strftime('%I:%M %p UTC')}\n"
+                            f"⏱️ {html.bold('Duration:')} {duration_mins} minutes\n\n"
+                            f"🔗 <a href='https://leetcode.com/contest/{slug}'>Make sure you are registered!</a>"
+                        )
+                        for cid in channels:
+                            try:
+                                await bot.send_message(chat_id=cid, text=today_msg, parse_mode="HTML")
+                            except Exception as e:
+                                logger.error(f"Error sending contest today alert to feed {cid}: {e}")
+                        await cache_manager.set(today_cache_key, "1", expire_seconds=86400)
+
+                # Starting alert (starts in <= 5 minutes)
+                if time_to_start <= 300:
+                    start_cache_key = f"leetcode_feed:contest_alert_start:{slug}"
+                    start_posted = await cache_manager.get(start_cache_key)
+                    if not start_posted:
+                        start_msg = (
+                            f"🚀 {html.bold('LeetCode Contest Starting Now!')} ⚔️\n\n"
+                            f"🏆 {html.bold(html_escape(title))} is beginning!\n"
+                            f"⏱️ {html.bold('Duration:')} {duration_mins} minutes\n\n"
+                            f"🔗 <a href='https://leetcode.com/contest/{slug}'>Enter Contest Arena</a>\n\n"
+                            f"Good luck and high rating boosts to all participants! 💪"
+                        )
+                        for cid in channels:
+                            try:
+                                await bot.send_message(chat_id=cid, text=start_msg, parse_mode="HTML")
+                            except Exception as e:
+                                logger.error(f"Error sending contest start alert to feed {cid}: {e}")
+                        await cache_manager.set(start_cache_key, "1", expire_seconds=7200)
+
+            # Ending alert (ended in the last 10 minutes)
+            time_since_end = now_ts - end_time
+            if 0 <= time_since_end <= 600:
+                end_cache_key = f"leetcode_feed:contest_alert_end:{slug}"
+                end_posted = await cache_manager.get(end_cache_key)
+                if not end_posted:
+                    end_msg = (
+                        f"🏁 {html.bold('LeetCode Contest has Ended!')} 🏆\n\n"
+                        f"🏆 {html.bold(html_escape(title))} has finished.\n\n"
+                        f"How did it go? Discuss solutions, analyze your complexity using `/analyze`, or review code structures using `/review` with @MemoizeLC_bot! 🧠"
+                    )
+                    for cid in channels:
+                        try:
+                            await bot.send_message(chat_id=cid, text=end_msg, parse_mode="HTML")
+                        except Exception as e:
+                            logger.error(f"Error sending contest end alert to feed {cid}: {e}")
+                    await cache_manager.set(end_cache_key, "1", expire_seconds=7200)
+
+    except Exception as e:
+        logger.error(f"Error in poll_leetcode_feed: {e}", exc_info=True)
+        tb = traceback.format_exc()
+        if len(tb) > 2500:
+            tb = tb[:2500] + "\n...[truncated]"
+        error_msg = (
+            f"🚨 {html.bold('CRITICAL: Error in Background Task (poll_leetcode_feed)')} 🚨\n\n"
+            f"⚠️ {html.bold('Error:')} {html.code(str(e))}\n\n"
+            f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
+        )
+        from src.utils.logging_helper import send_log
+        await send_log(error_msg, pin=True, disable_notification=False)
+
+
+@dp.errors()
+async def global_error_handler(event: ErrorEvent):
+    exception = event.exception
+    update = event.update
+    logger.error(f"Unhandled exception in bot: {exception}", exc_info=exception)
+    
+    # Extract update context
+    update_str = "Unknown Update"
+    try:
+        update_str = update.model_dump_json(indent=2)
+    except Exception:
+        update_str = str(update)
+        
+    tb = "".join(traceback.format_exception(type(exception), exception, exception.__traceback__))
+    if len(tb) > 2500:
+        tb = tb[:2500] + "\n...[truncated]"
+
+    error_msg = (
+        f"🚨 {html.bold('CRITICAL: Unhandled Exception in Bot')} 🚨\n\n"
+        f"⚠️ {html.bold('Error:')} {html.code(str(exception))}\n\n"
+        f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>\n\n"
+        f"📥 {html.bold('Triggering Update:')}\n<pre><code class='language-json'>{html_escape(update_str[:1000])}</code></pre>"
+    )
+    
+    from src.utils.logging_helper import send_log
+    await send_log(error_msg, pin=True, disable_notification=False)
 
 
 @asynccontextmanager
@@ -196,9 +427,44 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(poll_active_battles, 'interval', seconds=settings.BATTLE_POLL_INTERVAL, id='poll_battles', replace_existing=True)
     # Check SRS reviews once a day (at 9 AM)
     scheduler.add_job(check_srs_reviews, 'cron', hour=9, minute=0, id='srs_reviews', replace_existing=True)
+    # Poll LeetCode challenge and contests every 5 minutes
+    scheduler.add_job(poll_leetcode_feed, 'interval', minutes=5, id='poll_leetcode_feed', replace_existing=True)
 
     scheduler.start()
     logger.info("Scheduler started.")
+
+    # Run LeetCode feed poll immediately on startup in a background task
+    asyncio.create_task(poll_leetcode_feed())
+
+    # Send bot startup notification to log channel
+    from src.utils.logging_helper import send_log
+    startup_msg = (
+        f"🤖 {html.bold('Memoize Bot is UP and Running')} 🚀\n\n"
+        f"⏰ {html.bold('Started at:')} {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+        f"⚙️ {html.bold('Mode:')} {html.code('Webhook' if settings.WEBHOOK_URL else 'Polling')}"
+    )
+    await send_log(startup_msg, disable_notification=True)
+
+    # Send public online notification to all configured public & LeetCode feed channels
+    target_channels = set(settings.public_channels + settings.leetcode_feed_channels)
+    if target_channels:
+        public_msg = (
+            f"⚡ {html.bold('Memoize Companion Bot is Online!')} 🚀\n\n"
+            f"The bot is active and ready to handle your LeetCode daily challenges, spaced repetition reviews, speed battles, and AI queries!\n\n"
+            f"👉 Click here to start practicing: @MemoizeLC_bot\n\n"
+            f"🎯 Join us to maintain your discipline and level up your coding skills!"
+        )
+        for channel_id in target_channels:
+            try:
+                await bot.send_message(
+                    chat_id=channel_id,
+                    text=public_msg,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.error(f"Failed to send startup message to channel {channel_id}: {e}", exc_info=True)
+
+
 
     yield
 
@@ -225,7 +491,17 @@ async def telegram_webhook(request: Request):
         await dp.feed_update(bot, update)
         return {"status": "ok"}
     except Exception as e:
-        logger.error(f"Webhook update processing error: {e}")
+        logger.error(f"Webhook update processing error: {e}", exc_info=True)
+        tb = traceback.format_exc()
+        if len(tb) > 2500:
+            tb = tb[:2500] + "\n...[truncated]"
+        error_msg = (
+            f"🚨 {html.bold('CRITICAL: Error in Webhook Ingestion')} 🚨\n\n"
+            f"⚠️ {html.bold('Error:')} {html.code(str(e))}\n\n"
+            f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
+        )
+        from src.utils.logging_helper import send_log
+        await send_log(error_msg, pin=True, disable_notification=False)
         return {"status": "error", "message": str(e)}
 
 

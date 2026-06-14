@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -25,6 +26,42 @@ class Settings(BaseSettings):
     # Battle check frequency (in seconds)
     BATTLE_POLL_INTERVAL: int = 60
 
+    # Log Channel Configuration
+    LOG_CHANNEL_ID: Optional[int] = None
+    PUBLIC_CHANNEL_ID: str = ""
+    LEETCODE_FEED_CHANNEL_ID: str = ""
+
+    @property
+    def public_channels(self) -> list[int]:
+        if not self.PUBLIC_CHANNEL_ID:
+            return []
+        ids = []
+        for x in self.PUBLIC_CHANNEL_ID.split(","):
+            val = x.strip()
+            if val:
+                try:
+                    ids.append(int(val))
+                except ValueError:
+                    pass
+        return ids
+
+    @property
+    def leetcode_feed_channels(self) -> list[int]:
+        if not self.LEETCODE_FEED_CHANNEL_ID:
+            return []
+        ids = []
+        for x in self.LEETCODE_FEED_CHANNEL_ID.split(","):
+            val = x.strip()
+            if val:
+                try:
+                    ids.append(int(val))
+                except ValueError:
+                    pass
+        return ids
+
+
+
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -33,3 +70,4 @@ class Settings(BaseSettings):
 
 # Instantiate settings
 settings = Settings(_env_file=".env")
+

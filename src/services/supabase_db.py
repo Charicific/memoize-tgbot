@@ -17,9 +17,20 @@ class SupabaseDB:
                 dsn = settings.SUPABASE_DB_URL.replace("postgresql+asyncpg://", "postgresql://")
                 self.pool = await asyncpg.create_pool(dsn, ssl='require')
                 logger.info("Database connection pool established.")
+
+                # Check/create group_members table if not exists
+                await self.execute("""
+                CREATE TABLE IF NOT EXISTS group_members (
+                    group_id BIGINT,
+                    telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
+                    PRIMARY KEY (group_id, telegram_id)
+                );
+                """)
+                logger.info("Checked/Created group_members table.")
             except Exception as e:
                 logger.error(f"Failed to connect to database: {e}")
                 raise e
+
 
     async def close(self):
         if self.pool:
@@ -184,5 +195,58 @@ class SupabaseDB:
         rows = await self.fetch(query, limit)
         return [dict(r) for r in rows]
 
+    # --- System Stats ---
+    async def get_bot_stats(self) -> Dict[str, int]:
+        query = """
+        SELECT
+            (SELECT COUNT(*) FROM users) AS total_users,
+            (SELECT COUNT(*) FROM linked_accounts) AS total_linked,
+            (SELECT COUNT(*) FROM linked_accounts WHERE verified = TRUE) AS total_verified,
+            (SELECT COUNT(*) FROM battles) AS total_battles,
+            (SELECT COUNT(*) FROM battles WHERE status IN ('ACTIVE', 'PENDING')) AS active_battles,
+            (SELECT COUNT(*) FROM battles WHERE status = 'COMPLETED') AS completed_battles,
+            (SELECT COUNT(*) FROM problem_history) AS total_solved,
+            (SELECT COUNT(*) FROM srs_reviews) AS total_srs
+        """
+        row = await self.fetchrow(query)
+        if row:
+            return dict(row)
+        return {
+            "total_users": 0,
+            "total_linked": 0,
+            "total_verified": 0,
+            "total_battles": 0,
+            "active_battles": 0,
+            "completed_battles": 0,
+            "total_solved": 0,
+            "total_srs": 0
+        }
+
+    # --- Group Memberships & Leaderboards ---
+    async def record_group_member(self, group_id: int, telegram_id: int, username: Optional[str], first_name: Optional[str]):
+        # Ensure user exists in users table first
+        await self.create_user(telegram_id, username, first_name)
+        # Record group membership
+        query = """
+        INSERT INTO group_members (group_id, telegram_id)
+        VALUES ($1, $2)
+        ON CONFLICT (group_id, telegram_id) DO NOTHING
+        """
+        await self.execute(query, group_id, telegram_id)
+
+    async def get_group_leaderboard(self, group_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+        query = """
+        SELECT u.telegram_id, u.username, u.first_name, u.xp, u.level, u.coins
+        FROM users u
+        JOIN group_members gm ON u.telegram_id = gm.telegram_id
+        WHERE gm.group_id = $1
+        ORDER BY u.xp DESC
+        LIMIT $2
+        """
+        rows = await self.fetch(query, group_id, limit)
+        return [dict(r) for r in rows]
+
 # Global DB Instance
 db = SupabaseDB()
+
+
