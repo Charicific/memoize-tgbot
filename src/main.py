@@ -2,6 +2,7 @@ import asyncio
 import logging
 import datetime
 import traceback
+from typing import Optional
 from html import escape as html_escape
 from contextlib import asynccontextmanager
 
