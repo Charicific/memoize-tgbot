@@ -1,9 +1,9 @@
 import random
 import logging
 import datetime
-from aiogram import Router, html
+from aiogram import Router, html, F
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from src.services.leetcode import LeetCodeClient
 from src.services.redis_cache import cache_manager
 from src.utils.formatters import clean_leetcode_html
@@ -176,3 +176,42 @@ async def cmd_random(message: Message, command: CommandObject):
     )
     
     await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@router.callback_query(F.data == "view_daily_desc")
+async def process_view_daily_desc(callback_query: CallbackQuery):
+    # Fetch today's daily challenge
+    daily = await leetcode_client.get_daily_challenge()
+    if not daily:
+        await callback_query.answer("❌ Failed to fetch daily challenge details. Please try again later.", show_alert=True)
+        return
+        
+    question = daily["question"]
+    title = question["title"]
+    title_slug = question["titleSlug"]
+    difficulty = question["difficulty"]
+    content = question["content"]
+    tags = [t["name"] for t in question["topicTags"]]
+    link = f"https://leetcode.com{daily['link']}"
+
+    clean_description = clean_leetcode_html(content, max_length=2000)
+    diff_emoji = "🟢" if difficulty == "Easy" else "🟡" if difficulty == "Medium" else "🔴"
+    
+    response = (
+        f"📅 {html.bold('Daily Coding Challenge')} ({daily['date']})\n\n"
+        f"🏆 {html.bold(title)}\n"
+        f"Difficulty: {diff_emoji} {html.bold(difficulty)}\n"
+        f"Tags: {html.italic(', '.join(tags))}\n"
+        f"🔗 Link: <a href='{link}'>Solve on LeetCode</a>\n\n"
+        f"{html.bold('Problem Description:')}\n"
+        f"{clean_description}\n\n"
+        f"💡 {html.italic('To get progressive hints for this problem, type:')}\n"
+        f"`/hint {title_slug}`"
+    )
+
+    try:
+        await callback_query.message.edit_text(response, parse_mode="HTML", disable_web_page_preview=True)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error editing daily challenge DM reminder description: {e}")
+        await callback_query.answer("Failed to display description.")

@@ -2,14 +2,16 @@ import random
 import logging
 import time
 from html import escape as html_escape
-from aiogram import Router, html
-
+from aiogram import Router, html, F
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message, ChatMemberUpdated
+from aiogram.types import Message, ChatMemberUpdated, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+
 from src.services.supabase_db import db
 from src.services.leetcode import LeetCodeClient
 from src.services.redis_cache import cache_manager
 from src.utils.logging_helper import send_log
+from src.utils.formatters import clean_leetcode_html
+from src.utils.roles import RoleFilter, UserRole
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ leetcode_client = LeetCodeClient()
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, command: CommandObject):
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
@@ -27,6 +29,42 @@ async def cmd_start(message: Message):
     # Check if rate limited
     if await cache_manager.is_rate_limited(user_id, "start", limit=3, period=10):
         await message.reply("Please don't spam. Wait a few seconds.")
+        return
+
+    # Check start parameters first (e.g. start=daily)
+    if command.args and command.args.startswith("daily"):
+        # Auto-create user record in case they haven't started the bot yet
+        await db.create_user(user_id, username, first_name)
+        
+        await message.reply("🔍 Fetching today's LeetCode daily challenge...")
+        daily = await leetcode_client.get_daily_challenge()
+        if not daily:
+            await message.reply("❌ Failed to fetch daily challenge. Please try again later.")
+            return
+
+        question = daily["question"]
+        title = question["title"]
+        title_slug = question["titleSlug"]
+        difficulty = question["difficulty"]
+        content = question["content"]
+        tags = [t["name"] for t in question["topicTags"]]
+        link = f"https://leetcode.com{daily['link']}"
+
+        clean_description = clean_leetcode_html(content, max_length=2000)
+        diff_emoji = "🟢" if difficulty == "Easy" else "🟡" if difficulty == "Medium" else "🔴"
+        
+        response = (
+            f"📅 {html.bold('Daily Coding Challenge')} ({daily['date']})\n\n"
+            f"🏆 {html.bold(title)}\n"
+            f"Difficulty: {diff_emoji} {html.bold(difficulty)}\n"
+            f"Tags: {html.italic(', '.join(tags))}\n"
+            f"🔗 Link: <a href='{link}'>Solve on LeetCode</a>\n\n"
+            f"{html.bold('Problem Description:')}\n"
+            f"{clean_description}\n\n"
+            f"💡 {html.italic('To get progressive hints for this problem, type:')}\n"
+            f"`/hint {title_slug}`"
+        )
+        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
         return
 
     # Check if user already exists
@@ -69,7 +107,10 @@ async def cmd_help(message: Message):
         f"⚙️ {html.bold('Profile & Accounts:')}\n"
         f"• {html.code('/link &lt;leetcode_username&gt;')} — Link your LeetCode account\n"
         "• `/verify` — Verify ownership via LeetCode bio\n"
-        "• `/profile` — View your progress, XP, coins, and LeetCode stats\n\n"
+        "• `/unlink` — Unlink your LeetCode account from the bot\n"
+        "• `/profile` — View your progress, XP, coins, and LeetCode stats\n"
+        "• `/streak` — View your LeetCode submission streak (consecutive active calendar days)\n"
+        "• `/dstreak` — View your LeetCode Daily Challenge streak (consecutive daily challenge solves)\n\n"
         f"⚔️ {html.bold('Practice & Competitions:')}\n"
         "• `/daily` — Fetch today's LeetCode challenge\n"
         "• `/random [difficulty] [tag]` — Get a random problem (e.g. `/random medium dp`)\n"
@@ -86,12 +127,13 @@ async def cmd_help(message: Message):
         f"• {html.code('/review &lt;paste_code&gt;')} — Full structural code review (Gemini Flash 2.0)\n\n"
         f"🛠️ {html.bold('Utility:')}\n"
         "• `/ping` — Measure bot response speed & DB latency\n"
-        "• `/stats` — View bot usage and statistics"
+        "• `/stats` — View bot usage and statistics\n"
+        "• `/reminders` — Configure personal alerts (daily challenge, streaks, contests)"
     )
     await message.reply(help_text, parse_mode="HTML")
 
 
-@router.message(Command("ping"))
+@router.message(Command("ping"), RoleFilter(UserRole.COORDINATOR))
 async def cmd_ping(message: Message):
     # Measure DB latency
     start_db = time.time()
@@ -115,7 +157,7 @@ async def cmd_ping(message: Message):
     await sent_msg.edit_text(status_text, parse_mode="HTML")
 
 
-@router.message(Command("stats"))
+@router.message(Command("stats"), RoleFilter(UserRole.COORDINATOR))
 async def cmd_stats(message: Message):
     try:
         stats = await db.get_bot_stats()
@@ -266,6 +308,44 @@ async def cmd_verify(message: Message):
         )
 
 
+@router.message(Command("unlink"))
+async def cmd_unlink(message: Message):
+    user_id = message.from_user.id
+
+    if await cache_manager.is_rate_limited(user_id, "unlink", limit=3, period=10):
+        await message.reply("Please wait a moment before trying again.")
+        return
+
+    link = await db.get_linked_account(user_id)
+    if not link:
+        await message.reply("⚠️ You do not have a linked LeetCode account.")
+        return
+
+    leetcode_username = link["leetcode_username"]
+
+    # Delete link from database
+    await db.execute("DELETE FROM linked_accounts WHERE telegram_id = $1", user_id)
+
+    # Log action to log channel
+    user_link = f"tg://user?id={user_id}"
+    mention = f"<a href='{user_link}'>{html_escape(message.from_user.first_name or 'User')}</a>"
+    if message.from_user.username:
+        mention += f" (@{html_escape(message.from_user.username)})"
+
+    log_text = (
+        f"🔌 {html.bold('LeetCode Account Unlinked')} 🔌\n\n"
+        f"• {html.bold('User:')} {mention}\n"
+        f"• {html.bold('Telegram ID:')} {html.code(user_id)}\n"
+        f"• {html.bold('Unlinked Account:')} <a href='https://leetcode.com/{html_escape(leetcode_username)}'>{html_escape(leetcode_username)}</a>"
+    )
+    await send_log(log_text)
+
+    await message.reply(
+        f"✅ Successfully unlinked LeetCode profile {html.bold(leetcode_username)} from your Telegram account.",
+        parse_mode="HTML"
+    )
+
+
 @router.message(Command("profile"))
 async def cmd_profile(message: Message):
     user_id = message.from_user.id
@@ -398,3 +478,138 @@ async def on_my_chat_member_update(event: ChatMemberUpdated):
             f"👤 {html.bold('Removed By:')} {actor_mention}"
         )
         await send_log(log_text)
+
+
+def get_reminders_keyboard(daily: bool, streak: bool, contests: bool) -> InlineKeyboardMarkup:
+    daily_status = "✅ ON" if daily else "❌ OFF"
+    streak_status = "✅ ON" if streak else "❌ OFF"
+    contests_status = "✅ ON" if contests else "❌ OFF"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"📅 Daily Challenge: {daily_status}", callback_data="toggle_reminder:daily")],
+        [InlineKeyboardButton(text=f"🔥 Streak Warning: {streak_status}", callback_data="toggle_reminder:streak")],
+        [InlineKeyboardButton(text=f"🏆 Contests: {contests_status}", callback_data="toggle_reminder:contests")],
+        [InlineKeyboardButton(text=f"📥 Save & Close Menu", callback_data="toggle_reminder:close")]
+    ])
+    return keyboard
+
+@router.message(Command("reminders"))
+async def cmd_reminders(message: Message):
+    user_id = message.from_user.id
+    
+    if message.chat.type != "private":
+        await message.reply("🔔 Personal reminder configurations can only be customized in private chat with the bot. Send `/reminders` in DM @MemoizeLC_bot.")
+        return
+
+    user_db = await db.get_user(user_id)
+    if not user_db:
+        user_db = await db.create_user(user_id, message.from_user.username, message.from_user.first_name)
+
+    daily = user_db.get("remind_daily", True)
+    if daily is None: daily = True
+    streak = user_db.get("remind_streak", True)
+    if streak is None: streak = True
+    contests = user_db.get("remind_contests", True)
+    if contests is None: contests = True
+
+    response = (
+        f"🔔 {html.bold('Personal Reminder Settings')} 🔔\n\n"
+        f"Manage the alerts you receive directly from the bot:\n\n"
+        f"• {html.bold('Daily Challenge:')} Posts the daily LeetCode challenge when it drops.\n"
+        f"• {html.bold('Streak Warning:')} Warm reminder in the evening (8:30 PM IST) if you haven't solved a problem today.\n"
+        f"• {html.bold('Contest Alerts:')} Notifications for registration, 12h countdown, and contest starts.\n\n"
+        f"👇 Click the buttons below to toggle your reminder choices:"
+    )
+
+    keyboard = get_reminders_keyboard(daily, streak, contests)
+    await message.reply(response, reply_markup=keyboard, parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("toggle_reminder:"))
+async def process_toggle_reminder(callback_query: CallbackQuery):
+    action = callback_query.data.split(":")[1]
+    user_id = callback_query.from_user.id
+    
+    if action == "close":
+        await callback_query.message.edit_text("✅ Reminder settings saved successfully!")
+        await callback_query.answer("Settings saved.")
+        return
+
+    user_db = await db.get_user(user_id)
+    if not user_db:
+        await callback_query.answer("User profile not found. Send /start first.", show_alert=True)
+        return
+
+    column_map = {
+        "daily": "remind_daily",
+        "streak": "remind_streak",
+        "contests": "remind_contests"
+    }
+    
+    col = column_map.get(action)
+    if not col:
+        await callback_query.answer("Invalid callback query.")
+        return
+
+    current_val = user_db.get(col, True)
+    if current_val is None: current_val = True
+    new_val = not current_val
+    
+    await db.update_reminder_setting(user_id, col, new_val)
+    
+    user_db[col] = new_val
+    
+    if col == "remind_streak" and new_val:
+        import asyncio
+        from src.main import trigger_streak_reminder_for_user
+        asyncio.create_task(trigger_streak_reminder_for_user(user_id))
+
+    
+    daily = user_db.get("remind_daily", True)
+    if daily is None: daily = True
+    streak = user_db.get("remind_streak", True)
+    if streak is None: streak = True
+    contests = user_db.get("remind_contests", True)
+    if contests is None: contests = True
+    
+    response = (
+        f"🔔 {html.bold('Personal Reminder Settings')} 🔔\n\n"
+        f"Manage the alerts you receive directly from the bot:\n\n"
+        f"• {html.bold('Daily Challenge:')} Posts the daily LeetCode challenge when it drops.\n"
+        f"• {html.bold('Streak Warning:')} Warm reminder in the evening (8:30 PM IST) if you haven't solved a problem today.\n"
+        f"• {html.bold('Contest Alerts:')} Notifications for registration, 12h countdown, and contest starts.\n\n"
+        f"👇 Click the buttons below to toggle your reminder choices:"
+    )
+    
+    keyboard = get_reminders_keyboard(daily, streak, contests)
+    
+    try:
+        await callback_query.message.edit_text(response, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+        
+    status_str = "Enabled" if new_val else "Disabled"
+    await callback_query.answer(f"{action.capitalize()} reminders {status_str.lower()}!")
+
+
+@router.message(Command("myrole"))
+async def cmd_myrole(message: Message):
+    from aiogram import Bot
+    from src.utils.roles import get_user_role
+    
+    # We can get bot dynamically from message context or update context in aiogram 3
+    bot = message.bot
+    role = await get_user_role(
+        user_id=message.from_user.id,
+        chat_id=message.chat.id,
+        chat_type=message.chat.type,
+        bot=bot
+    )
+    
+    await message.reply(
+        f"👤 {html.bold(message.from_user.first_name or 'User')} details:\n"
+        f"• Telegram ID: {html.code(message.from_user.id)}\n"
+        f"• Chat Type: {html.code(message.chat.type)}\n"
+        f"• Resolved Role: {html.bold(role.name)} ({role.value})",
+        parse_mode="HTML"
+    )
+

@@ -27,6 +27,52 @@ class SupabaseDB:
                 );
                 """)
                 logger.info("Checked/Created group_members table.")
+
+                # Add reminder settings and role columns if they don't exist
+                await self.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS remind_daily BOOLEAN DEFAULT TRUE;")
+                await self.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS remind_streak BOOLEAN DEFAULT TRUE;")
+                await self.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS remind_contests BOOLEAN DEFAULT TRUE;")
+                await self.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'USER';")
+                await self.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;")
+                logger.info("Checked/Added reminder settings, role and is_banned columns to users table.")
+
+                await self.execute("""
+                CREATE TABLE IF NOT EXISTS daily_challenges (
+                    date DATE PRIMARY KEY,
+                    problem_slug VARCHAR(255) NOT NULL
+                );
+                """)
+                logger.info("Checked/Created daily_challenges table.")
+
+                # Check/create group_settings table
+                await self.execute("""
+                CREATE TABLE IF NOT EXISTS group_settings (
+                    group_id BIGINT,
+                    setting_name VARCHAR(100),
+                    setting_value VARCHAR(255),
+                    PRIMARY KEY (group_id, setting_name)
+                );
+                """)
+                logger.info("Checked/Created group_settings table.")
+
+                # Check/create group_battle_mutes table
+                await self.execute("""
+                CREATE TABLE IF NOT EXISTS group_battle_mutes (
+                    group_id BIGINT,
+                    telegram_id BIGINT,
+                    muted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (group_id, telegram_id)
+                );
+                """)
+                logger.info("Checked/Created group_battle_mutes table.")
+
+                # Add paused_at and remaining_seconds columns to battles table
+                await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE;")
+                await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS remaining_seconds INT;")
+                await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS chat_id BIGINT;")
+                await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS message_id BIGINT;")
+                logger.info("Checked/Added paused_at, remaining_seconds, chat_id, and message_id columns to battles table.")
+
             except Exception as e:
                 logger.error(f"Failed to connect to database: {e}")
                 raise e
@@ -147,7 +193,7 @@ class SupabaseDB:
     async def get_due_srs_reviews(self, telegram_id: int) -> List[Dict[str, Any]]:
         query = """
         SELECT * FROM srs_reviews
-        WHERE telegram_id = $1 AND next_review_date <= NOW()
+        WHERE telegram_id = $1 AND next_review_date::date <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date
         ORDER BY next_review_date ASC
         """
         rows = await self.fetch(query, telegram_id)
@@ -162,6 +208,12 @@ class SupabaseDB:
         """
         row = await self.fetchrow(query, challenger_id, opponent_id, problem_slug, problem_title, expires_at)
         return dict(row)
+
+    async def update_battle_message(self, battle_id: str, chat_id: int, message_id: int):
+        await self.execute(
+            "UPDATE battles SET chat_id = $2, message_id = $3 WHERE id = $1::uuid",
+            battle_id, chat_id, message_id
+        )
 
     async def get_battle(self, battle_id: str) -> Optional[Dict[str, Any]]:
         row = await self.fetchrow("SELECT * FROM battles WHERE id = $1::uuid", battle_id)
@@ -246,7 +298,119 @@ class SupabaseDB:
         rows = await self.fetch(query, group_id, limit)
         return [dict(r) for r in rows]
 
+
+    # --- Reminder Settings ---
+    async def update_reminder_setting(self, telegram_id: int, setting_name: str, value: bool) -> Optional[Dict[str, Any]]:
+        if setting_name not in ["remind_daily", "remind_streak", "remind_contests"]:
+            raise ValueError(f"Invalid setting name: {setting_name}")
+        
+        query = f"""
+        UPDATE users
+        SET {setting_name} = $2
+        WHERE telegram_id = $1
+        RETURNING *
+        """
+        row = await self.fetchrow(query, telegram_id, value)
+        return dict(row) if row else None
+
+    async def get_users_with_daily_reminders(self) -> List[int]:
+        query = "SELECT telegram_id FROM users WHERE COALESCE(remind_daily, TRUE) = TRUE"
+        rows = await self.fetch(query)
+        return [r["telegram_id"] for r in rows]
+
+    async def get_users_with_contest_reminders(self) -> List[int]:
+        query = "SELECT telegram_id FROM users WHERE COALESCE(remind_contests, TRUE) = TRUE"
+        rows = await self.fetch(query)
+        return [r["telegram_id"] for r in rows]
+
+    async def get_users_for_streak_check(self) -> List[Dict[str, Any]]:
+        query = """
+        SELECT u.telegram_id, la.leetcode_username
+        FROM users u
+        LEFT JOIN linked_accounts la ON u.telegram_id = la.telegram_id AND la.verified = TRUE
+        WHERE COALESCE(u.remind_streak, TRUE) = TRUE
+          AND NOT EXISTS (
+              SELECT 1 FROM problem_history ph
+              WHERE ph.telegram_id = u.telegram_id
+                AND ph.solved_at::date = CURRENT_DATE
+          )
+        """
+        rows = await self.fetch(query)
+        return [dict(r) for r in rows]
+
+    async def record_daily_challenge(self, date_str: str, problem_slug: str):
+        date_obj = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+        query = """
+        INSERT INTO daily_challenges (date, problem_slug)
+        VALUES ($1, $2)
+        ON CONFLICT (date) DO UPDATE SET problem_slug = EXCLUDED.problem_slug
+        """
+        await self.execute(query, date_obj, problem_slug)
+
+    async def get_user_daily_challenge_dates(self, telegram_id: int) -> List[datetime.date]:
+        query = """
+        SELECT DISTINCT dc.date AS solve_date
+        FROM daily_challenges dc
+        JOIN problem_history ph ON dc.problem_slug = ph.problem_slug
+        WHERE ph.telegram_id = $1
+          AND ph.solved_at::date = dc.date
+        ORDER BY solve_date DESC
+        """
+        rows = await self.fetch(query, telegram_id)
+        return [r["solve_date"] for r in rows]
+
+    # --- Group Settings & Battle Mutes ---
+    async def get_group_setting(self, group_id: int, setting_name: str) -> Optional[str]:
+        row = await self.fetchrow(
+            "SELECT setting_value FROM group_settings WHERE group_id = $1 AND setting_name = $2",
+            group_id, setting_name
+        )
+        return row["setting_value"] if row else None
+
+    async def set_group_setting(self, group_id: int, setting_name: str, setting_value: str):
+        query = """
+        INSERT INTO group_settings (group_id, setting_name, setting_value)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (group_id, setting_name)
+        DO UPDATE SET setting_value = EXCLUDED.setting_value
+        """
+        await self.execute(query, group_id, setting_name, setting_value)
+
+    async def mute_group_battle(self, group_id: int, telegram_id: int, mute: bool):
+        if mute:
+            await self.execute(
+                "INSERT INTO group_battle_mutes (group_id, telegram_id) VALUES ($1, $2) ON CONFLICT (group_id, telegram_id) DO NOTHING",
+                group_id, telegram_id
+            )
+        else:
+            await self.execute(
+                "DELETE FROM group_battle_mutes WHERE group_id = $1 AND telegram_id = $2",
+                group_id, telegram_id
+            )
+
+    async def is_group_battle_muted(self, group_id: int, telegram_id: int) -> bool:
+        row = await self.fetchrow(
+            "SELECT 1 FROM group_battle_mutes WHERE group_id = $1 AND telegram_id = $2",
+            group_id, telegram_id
+        )
+        return row is not None
+
+    async def clear_group_history(self, group_id: int):
+        await self.execute("DELETE FROM group_members WHERE group_id = $1", group_id)
+
+    async def get_user_by_id_or_username(self, identifier: str) -> Optional[Dict[str, Any]]:
+        # Strip leading '@' if present
+        cleaned = identifier.strip().lstrip('@')
+        if cleaned.isdigit() or (cleaned.startswith('-') and cleaned[1:].isdigit()):
+            # Treat as numeric Telegram ID
+            row = await self.fetchrow("SELECT * FROM users WHERE telegram_id = $1", int(cleaned))
+        else:
+            # Treat as Telegram Username
+            row = await self.fetchrow("SELECT * FROM users WHERE LOWER(username) = LOWER($1)", cleaned)
+        return dict(row) if row else None
+
 # Global DB Instance
 db = SupabaseDB()
+
 
 

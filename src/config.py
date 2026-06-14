@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     LOG_CHANNEL_ID: Optional[int] = None
     PUBLIC_CHANNEL_ID: str = ""
     LEETCODE_FEED_CHANNEL_ID: str = ""
+    SUPER_ADMIN_IDS: str = ""
 
     @property
     def public_channels(self) -> list[int]:
@@ -51,6 +52,20 @@ class Settings(BaseSettings):
             return []
         ids = []
         for x in self.LEETCODE_FEED_CHANNEL_ID.split(","):
+            val = x.strip()
+            if val:
+                try:
+                    ids.append(int(val))
+                except ValueError:
+                    pass
+        return ids
+
+    @property
+    def super_admin_ids(self) -> list[int]:
+        if not self.SUPER_ADMIN_IDS:
+            return []
+        ids = []
+        for x in self.SUPER_ADMIN_IDS.split(","):
             val = x.strip()
             if val:
                 try:

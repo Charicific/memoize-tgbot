@@ -219,3 +219,24 @@ class LeetCodeClient:
         if not data or not data.get("allContests"):
             return []
         return data["allContests"]
+
+    async def get_user_calendar(self, username: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches user submission calendar and active streak details.
+        """
+        query = """
+        query userProfileCalendar($username: String!) {
+          matchedUser(username: $username) {
+            userCalendar {
+              activeYears
+              streak
+              totalActiveDays
+              submissionCalendar
+            }
+          }
+        }
+        """
+        data = await self._query(query, {"username": username})
+        if not data or not data.get("matchedUser"):
+            return None
+        return data["matchedUser"].get("userCalendar")

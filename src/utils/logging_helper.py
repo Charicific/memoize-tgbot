@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from aiogram import html
+from aiogram import html, types
 
 logger = logging.getLogger(__name__)
 
@@ -34,3 +34,20 @@ async def send_log(text: str, pin: bool = False, disable_notification: bool = Tr
             )
     except Exception as e:
         logger.error(f"Failed to send log to Telegram channel {settings.LOG_CHANNEL_ID}: {e}", exc_info=True)
+
+
+async def log_admin_activity(action_text: str, message: types.Message):
+    """
+    Logs administrative actions, appending the source message link if available.
+    """
+    log_msg = action_text
+    
+    try:
+        url = message.get_url()
+        if url:
+            log_msg += f"\n• {html.bold('Source Message:')} <a href='{url}'>Link</a>"
+    except Exception:
+        pass
+        
+    await send_log(log_msg, disable_notification=False)
+

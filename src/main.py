@@ -9,7 +9,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, html, types, BaseMiddleware
 
-from aiogram.types import ErrorEvent
+from aiogram.types import ErrorEvent, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.redis import RedisStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -20,11 +20,14 @@ from src.services.redis_cache import cache_manager
 from src.services.leetcode import LeetCodeClient
 from src.handlers import get_main_router
 from src.utils.formatters import clean_leetcode_html
-
+from src.middlewares.ban_middleware import BanCheckMiddleware
+from src.middlewares.maintenance_middleware import MaintenanceCheckMiddleware
 
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # Initialize clients
@@ -32,30 +35,44 @@ bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher(storage=cache_manager.fsm_storage)
 leetcode_client = LeetCodeClient()
 
+
 class GroupMemberMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
-        if isinstance(event, types.Message) and event.chat.type in ["group", "supergroup"]:
+        if isinstance(event, types.Message) and event.chat.type in [
+            "group",
+            "supergroup",
+        ]:
             if event.from_user:
                 try:
                     await db.record_group_member(
                         group_id=event.chat.id,
                         telegram_id=event.from_user.id,
                         username=event.from_user.username,
-                        first_name=event.from_user.first_name
+                        first_name=event.from_user.first_name,
                     )
                 except Exception as e:
                     logger.error(f"Error in GroupMemberMiddleware: {e}")
         return await handler(event, data)
 
+
 dp.message.outer_middleware(GroupMemberMiddleware())
+dp.message.outer_middleware(BanCheckMiddleware())
+dp.message.outer_middleware(MaintenanceCheckMiddleware())
+dp.callback_query.outer_middleware(BanCheckMiddleware())
+dp.callback_query.outer_middleware(MaintenanceCheckMiddleware())
 
 
 # Initialize Scheduler
 # SQLAlchemyJobStore persists jobs into Postgres so they survive restarts
 jobstores = {
-    'default': SQLAlchemyJobStore(url=settings.SUPABASE_DB_URL.replace("postgresql+asyncpg://", "postgresql://"))
+    "default": SQLAlchemyJobStore(
+        url=settings.SUPABASE_DB_URL.replace("postgresql+asyncpg://", "postgresql://")
+    )
 }
-scheduler = AsyncIOScheduler(jobstores=jobstores)
+scheduler = AsyncIOScheduler(
+    jobstores=jobstores,
+    job_defaults={"misfire_grace_time": 60}
+)
 
 
 async def poll_active_battles():
@@ -68,17 +85,38 @@ async def poll_active_battles():
         for battle in active_battles:
             now = datetime.datetime.now(datetime.timezone.utc)
             expires_at = battle["expires_at"]
-            
+
             if isinstance(expires_at, str):
-                expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                expires_at = datetime.datetime.fromisoformat(
+                    expires_at.replace("Z", "+00:00")
+                )
+            elif expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
 
             # Handle expiry
             if now > expires_at:
                 await db.update_battle_status(battle["id"], "EXPIRED")
+                # Log battle expiry to log channel
+                from src.utils.logging_helper import send_log
+                log_text = (
+                    f"⏱️ {html.bold('LeetCode Battle Expired')} ⏱️\n\n"
+                    f"• {html.bold('Battle ID:')} {html.code(str(battle['id']))}\n"
+                    f"• {html.bold('Problem:')} {battle['problem_title']}\n"
+                    f"• {html.bold('Players:')} <a href='tg://user?id={battle['challenger_id']}'>Challenger</a> and <a href='tg://user?id={battle['opponent_id']}'>Opponent</a>"
+                )
+                await send_log(log_text, disable_notification=True)
                 expired_msg = f"⏱️ Battle for {html.bold(battle['problem_title'])} has expired because time limit was reached."
                 try:
-                    await bot.send_message(chat_id=battle["challenger_id"], text=expired_msg, parse_mode="HTML")
-                    await bot.send_message(chat_id=battle["opponent_id"], text=expired_msg, parse_mode="HTML")
+                    await bot.send_message(
+                        chat_id=battle["challenger_id"],
+                        text=expired_msg,
+                        parse_mode="HTML",
+                    )
+                    await bot.send_message(
+                        chat_id=battle["opponent_id"],
+                        text=expired_msg,
+                        parse_mode="HTML",
+                    )
                 except Exception as e:
                     logger.error(f"Error sending battle expiration notification: {e}")
                 continue
@@ -88,7 +126,11 @@ async def poll_active_battles():
 
             started_at = battle["started_at"]
             if isinstance(started_at, str):
-                started_at = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                started_at = datetime.datetime.fromisoformat(
+                    started_at.replace("Z", "+00:00")
+                )
+            elif started_at and started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=datetime.timezone.utc)
 
             # Fetch account details
             challenger_link = await db.get_linked_account(battle["challenger_id"])
@@ -101,22 +143,30 @@ async def poll_active_battles():
             o_user = opponent_link["leetcode_username"]
 
             # Fetch recent accepted submissions
-            c_subs = await leetcode_client.get_recent_accepted_submissions(c_user, limit=5)
-            o_subs = await leetcode_client.get_recent_accepted_submissions(o_user, limit=5)
+            c_subs = await leetcode_client.get_recent_accepted_submissions(
+                c_user, limit=5
+            )
+            o_subs = await leetcode_client.get_recent_accepted_submissions(
+                o_user, limit=5
+            )
 
             c_solved_ts = None
             o_solved_ts = None
 
             for sub in c_subs:
                 if sub["titleSlug"] == battle["problem_slug"]:
-                    sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
+                    sub_time = datetime.datetime.fromtimestamp(
+                        int(sub["timestamp"]), tz=datetime.timezone.utc
+                    )
                     if sub_time > started_at:
                         c_solved_ts = sub_time
                         break
 
             for sub in o_subs:
                 if sub["titleSlug"] == battle["problem_slug"]:
-                    sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
+                    sub_time = datetime.datetime.fromtimestamp(
+                        int(sub["timestamp"]), tz=datetime.timezone.utc
+                    )
                     if sub_time > started_at:
                         o_solved_ts = sub_time
                         break
@@ -140,17 +190,36 @@ async def poll_active_battles():
                 loser_id = battle["challenger_id"]
 
             if winner_id:
-                await db.update_battle_status(battle["id"], "COMPLETED", winner_id=winner_id, ended_at=now)
+                await db.update_battle_status(
+                    battle["id"], "COMPLETED", winner_id=winner_id, ended_at=now
+                )
                 # Award points
                 await db.add_xp_coins(winner_id, xp=100, coins=20)
                 await db.add_xp_coins(loser_id, xp=20, coins=0)
 
                 # Get usernames
-                winner_row = await db.fetchrow("SELECT username, first_name FROM users WHERE telegram_id = $1", winner_id)
-                loser_row = await db.fetchrow("SELECT username, first_name FROM users WHERE telegram_id = $1", loser_id)
+                winner_row = await db.fetchrow(
+                    "SELECT username, first_name FROM users WHERE telegram_id = $1",
+                    winner_id,
+                )
+                loser_row = await db.fetchrow(
+                    "SELECT username, first_name FROM users WHERE telegram_id = $1",
+                    loser_id,
+                )
 
                 w_name = winner_row["first_name"] or winner_row["username"] or "Winner"
                 l_name = loser_row["first_name"] or loser_row["username"] or "Loser"
+
+                # Log battle completion to log channel
+                from src.utils.logging_helper import send_log
+                log_text = (
+                    f"🏆 {html.bold('LeetCode Battle Won')} 🏆\n\n"
+                    f"• {html.bold('Battle ID:')} {html.code(str(battle['id']))}\n"
+                    f"• {html.bold('Problem:')} {battle['problem_title']}\n"
+                    f"• {html.bold('Winner:')} {w_name} ({winner_id})\n"
+                    f"• {html.bold('Loser:')} {l_name} ({loser_id})"
+                )
+                await send_log(log_text, disable_notification=True)
 
                 winner_url = f"https://leetcode.com/problems/{battle['problem_slug']}"
                 result_msg = (
@@ -162,8 +231,18 @@ async def poll_active_battles():
                 )
 
                 try:
-                    await bot.send_message(chat_id=battle["challenger_id"], text=result_msg, parse_mode="HTML", disable_web_page_preview=True)
-                    await bot.send_message(chat_id=battle["opponent_id"], text=result_msg, parse_mode="HTML", disable_web_page_preview=True)
+                    await bot.send_message(
+                        chat_id=battle["challenger_id"],
+                        text=result_msg,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                    await bot.send_message(
+                        chat_id=battle["opponent_id"],
+                        text=result_msg,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
                 except Exception as e:
                     logger.error(f"Error sending battle completed message: {e}")
     except Exception as e:
@@ -177,6 +256,7 @@ async def poll_active_battles():
             f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
         )
         from src.utils.logging_helper import send_log
+
         await send_log(error_msg, pin=True, disable_notification=False)
 
 
@@ -186,13 +266,24 @@ async def check_srs_reviews():
     """
     logger.info("Checking due SRS reviews...")
     try:
+        # Get today's local date for cache key
+        today_local_date = datetime.date.today()
         # Fetch all users
         rows = await db.fetch("SELECT telegram_id FROM users")
         for r in rows:
             user_id = r["telegram_id"]
+
+            # Prevent duplicate notifications/reminders on the same calendar day
+            sent_cache_key = f"srs_reminder:sent:{today_local_date}:{user_id}"
+            already_sent = await cache_manager.get(sent_cache_key)
+            if already_sent:
+                logger.info(f"SRS reminder check: User {user_id} has ALREADY been sent a reminder today. Skipping.")
+                continue
+
             due_reviews = await db.get_due_srs_reviews(user_id)
             if due_reviews:
                 count = len(due_reviews)
+                logger.info(f"SRS reminder check: User {user_id} has {count} due reviews. SENDING alert now...")
                 reminder_msg = (
                     f"🧠 {html.bold('Spaced Repetition Review Due!')}\n\n"
                     f"You have {html.bold(count)} LeetCode problems due for review today to reinforce memory retention.\n"
@@ -200,9 +291,15 @@ async def check_srs_reviews():
                     f"Let's maintain your learning streak! 💪"
                 )
                 try:
-                    await bot.send_message(chat_id=user_id, text=reminder_msg, parse_mode="HTML")
+                    await bot.send_message(
+                        chat_id=user_id, text=reminder_msg, parse_mode="HTML"
+                    )
+                    await cache_manager.set(sent_cache_key, "1", expire_seconds=86400)
+                    await asyncio.sleep(0.05)
                 except Exception as e:
                     logger.error(f"Failed to send SRS reminder to {user_id}: {e}")
+            else:
+                logger.info(f"SRS reminder check: User {user_id} has NO due reviews today. Skipping.")
     except Exception as e:
         logger.error(f"Error checking SRS reviews: {e}", exc_info=True)
         tb = traceback.format_exc()
@@ -214,7 +311,183 @@ async def check_srs_reviews():
             f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
         )
         from src.utils.logging_helper import send_log
+
         await send_log(error_msg, pin=True, disable_notification=False)
+
+
+async def check_user_streak_reminder(
+    user_id: int, leetcode_username: Optional[str]
+) -> bool:
+    """
+    Check and send streak warning/auto-log for a single user.
+    Returns True if a message was sent or problem was auto-logged, False otherwise.
+    """
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    today_utc_date = now_utc.date()
+
+    sent_cache_key = f"streak_reminder:sent:{today_utc_date}:{user_id}"
+    already_sent = await cache_manager.get(sent_cache_key)
+    if already_sent:
+        logger.info(f"Streak reminder check: User {user_id} has ALREADY been sent an alert today. Skipping.")
+        return False
+
+    solved_today = False
+    solved_sub = None
+
+    if leetcode_username:
+        try:
+            submissions = await leetcode_client.get_recent_accepted_submissions(
+                leetcode_username, limit=5
+            )
+            for sub in submissions:
+                sub_time = datetime.datetime.fromtimestamp(
+                    int(sub["timestamp"]), tz=datetime.timezone.utc
+                )
+                if sub_time.date() == today_utc_date:
+                    solved_today = True
+                    solved_sub = sub
+                    break
+        except Exception as api_err:
+            logger.error(
+                f"Error checking recent submissions for {leetcode_username}: {api_err}"
+            )
+
+    if solved_today and solved_sub:
+        try:
+            problem_slug = solved_sub["titleSlug"]
+            problem_title = solved_sub["title"]
+            # Fetch problem details to get difficulty
+            problem = await leetcode_client.get_problem_details(problem_slug)
+            difficulty = problem["difficulty"] if problem else "Medium"
+
+            # Auto-log solved problem
+            await db.record_solved_problem(
+                user_id, problem_slug, problem_title, difficulty
+            )
+            await db.add_xp_coins(user_id, xp=15, coins=5)
+
+            success_msg = (
+                f"🎉 {html.bold('Daily Solve Auto-Detected!')} 🏆\n\n"
+                f"We noticed you solved {html.bold(html_escape(problem_title))} on LeetCode today!\n"
+                f"Since you hadn't logged it yet, we went ahead and auto-logged it to keep your daily streak alive. 🔥\n\n"
+                f"🎁 Awarded {html.bold('15 XP')} and {html.bold('5 coins')}!\n\n"
+                f"💡 {html.italic('Note: If you ever want this problem scheduled for spaced repetition reviews, please run:')}\n"
+                f"`/solved {problem_slug} &lt;quality&gt;`"
+            )
+            logger.info(f"Streak reminder check: User {user_id} solved today ({problem_title}). SENDING auto-detect alert...")
+            await bot.send_message(chat_id=user_id, text=success_msg, parse_mode="HTML")
+            await cache_manager.set(sent_cache_key, "1", expire_seconds=86400)
+            return True
+        except Exception as inner_err:
+            logger.error(
+                f"Failed to auto-log solve or notify user {user_id}: {inner_err}"
+            )
+    else:
+        # Send the warning
+        warning_msg = (
+            f"🔥 {html.bold('Daily Solve Streak Warning!')} 🚨\n\n"
+            f"You haven't logged any solved problem today!\n"
+            f"Solve a problem on LeetCode and log it using `/solved &lt;problem_slug&gt; &lt;quality&gt;` to maintain your daily streak and earn XP/coins! 📈\n\n"
+            f"Don't break the chain! 💪"
+        )
+        try:
+            logger.info(f"Streak reminder check: User {user_id} has NOT solved today. SENDING streak warning alert...")
+            await bot.send_message(chat_id=user_id, text=warning_msg, parse_mode="HTML")
+            await cache_manager.set(sent_cache_key, "1", expire_seconds=86400)
+            return True
+        except Exception as inner_err:
+            logger.error(
+                f"Failed to send streak warning to user {user_id}: {inner_err}"
+            )
+    return False
+
+
+async def check_streak_reminders():
+    """
+    Daily check at 15:00 UTC to warn users who haven't solved any problems today,
+    automatically checking their verified LeetCode profile first if linked.
+    """
+    logger.info("Checking solve streak reminders...")
+    try:
+        users_to_check = await db.get_users_for_streak_check()
+        for u in users_to_check:
+            await check_user_streak_reminder(u["telegram_id"], u["leetcode_username"])
+            await asyncio.sleep(0.05)
+    except Exception as e:
+        logger.error(f"Error checking streak reminders: {e}", exc_info=True)
+        tb = traceback.format_exc()
+        if len(tb) > 2500:
+            tb = tb[:2500] + "\n...[truncated]"
+        error_msg = (
+            f"🚨 {html.bold('CRITICAL: Error in Background Task (check_streak_reminders)')} 🚨\n\n"
+            f"⚠️ {html.bold('Error:')} {html.code(str(e))}\n\n"
+            f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
+        )
+        from src.utils.logging_helper import send_log
+
+        await send_log(error_msg, pin=True, disable_notification=False)
+
+
+async def trigger_streak_reminder_for_user(user_id: int):
+    """
+    Checks and triggers streak reminder warning/auto-log for a specific user.
+    Used when a user enables the streak warning setting after the daily schedule time.
+    """
+    # Check if it is past 15:00 UTC today
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    scheduled_time = now_utc.replace(hour=15, minute=0, second=0, microsecond=0)
+
+    if now_utc < scheduled_time:
+        return
+
+    try:
+        # Get linked account details
+        link = await db.get_linked_account(user_id)
+        leetcode_username = (
+            link["leetcode_username"] if (link and link["verified"]) else None
+        )
+
+        # Check if user already has a solve logged in DB today
+        has_solve_logged = await db.fetchrow(
+            "SELECT 1 FROM problem_history WHERE telegram_id = $1 AND solved_at::date = CURRENT_DATE",
+            user_id,
+        )
+        if has_solve_logged:
+            return
+
+        await check_user_streak_reminder(user_id, leetcode_username)
+    except Exception as e:
+        logger.error(f"Error in trigger_streak_reminder_for_user: {e}")
+
+
+async def check_missed_jobs():
+    """
+    Checks if daily cron jobs were missed while the bot was offline and runs them if necessary.
+    """
+    await asyncio.sleep(10)  # Wait for startup connections to settle
+    logger.info("Running check for missed daily jobs...")
+
+    # 1. Check SRS Reviews (scheduled daily at 9:00 AM local system time)
+    local_now = datetime.datetime.now()
+    if local_now.hour >= 9:
+        logger.info(
+            "Bot started after 9:00 AM local time. Running check_srs_reviews for any missed reminders today..."
+        )
+        try:
+            await check_srs_reviews()
+        except Exception as e:
+            logger.error(f"Error running missed SRS reviews check: {e}")
+
+    # 2. Check Streak Reminders (scheduled daily at 15:00 UTC / 8:30 PM IST)
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    if utc_now.hour >= 15:
+        logger.info(
+            "Bot started after 15:00 UTC. Running check_streak_reminders for any missed warnings today..."
+        )
+        try:
+            await check_streak_reminders()
+        except Exception as e:
+            logger.error(f"Error running missed streak reminders check: {e}")
 
 
 async def poll_leetcode_feed():
@@ -224,7 +497,16 @@ async def poll_leetcode_feed():
     """
     logger.info("Polling LeetCode feed updates...")
     try:
-        channels = settings.leetcode_feed_channels
+        channels = list(settings.leetcode_feed_channels)
+        try:
+            active_groups = await db.fetch(
+                "SELECT group_id FROM group_settings WHERE setting_name = 'feed' AND setting_value = 'enable'"
+            )
+            for row in active_groups:
+                channels.append(row["group_id"])
+        except Exception as db_err:
+            logger.error(f"Error loading group feed subscribers: {db_err}")
+
         if not channels:
             return
 
@@ -235,6 +517,12 @@ async def poll_leetcode_feed():
         daily = await leetcode_client.get_daily_challenge()
         if daily:
             daily_date = daily["date"]  # Format: "YYYY-MM-DD"
+            try:
+                await db.record_daily_challenge(
+                    daily_date, daily["question"]["titleSlug"]
+                )
+            except Exception as e:
+                logger.error(f"Error recording daily challenge in DB: {e}")
             cache_key = f"leetcode_feed:daily_posted:{daily_date}"
             already_posted = await cache_manager.get(cache_key)
             if not already_posted:
@@ -243,28 +531,89 @@ async def poll_leetcode_feed():
                 difficulty = question["difficulty"]
                 tags = [t["name"] for t in question["topicTags"]]
                 link = f"https://leetcode.com{daily['link']}"
-                diff_emoji = "🟢" if difficulty == "Easy" else "🟡" if difficulty == "Medium" else "🔴"
-                
-                clean_description = clean_leetcode_html(question["content"], max_length=1500)
-                
-                daily_msg = (
+                diff_emoji = (
+                    "🟢"
+                    if difficulty == "Easy"
+                    else "🟡" if difficulty == "Medium" else "🔴"
+                )
+
+                clean_description = clean_leetcode_html(
+                    question["content"], max_length=1500
+                )
+
+                daily_summary_msg = (
                     f"📅 {html.bold('LeetCode Daily Coding Challenge')} ({daily_date})\n\n"
                     f"🏆 {html.bold(html_escape(title))}\n"
                     f"Difficulty: {diff_emoji} {html.bold(html_escape(difficulty))}\n"
                     f"Tags: {html.italic(', '.join([html_escape(t) for t in tags]))}\n"
                     f"🔗 Link: <a href='{link}'>Solve on LeetCode</a>\n\n"
-                    f"{html.bold('Description:')}\n"
-                    f"{clean_description}\n\n"
-                    f"💡 {html.italic('To get progressive hints for this problem, type:')}\n"
-                    f"`/hint {question['titleSlug']}` in @MemoizeLC_bot"
+                    f"💡 {html.italic('Click the button below to view the full description inside the bot!')}"
                 )
-                
+
+                # Fetch bot info to get username dynamically
+                try:
+                    bot_user = await bot.get_me()
+                    bot_username = bot_user.username
+                except Exception as info_err:
+                    logger.error(f"Error fetching bot username: {info_err}")
+                    bot_username = "MemoizeLC_bot"
+
+                feed_keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="👁️ View Full Question",
+                                url=f"https://t.me/{bot_username}?start=daily",
+                            )
+                        ]
+                    ]
+                )
+
+                dm_keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="👁️ View Description",
+                                callback_data="view_daily_desc",
+                            )
+                        ]
+                    ]
+                )
+
                 for cid in channels:
                     try:
-                        await bot.send_message(chat_id=cid, text=daily_msg, parse_mode="HTML", disable_web_page_preview=True)
+                        await bot.send_message(
+                            chat_id=cid,
+                            text=daily_summary_msg,
+                            parse_mode="HTML",
+                            reply_markup=feed_keyboard,
+                            disable_web_page_preview=True,
+                        )
                     except Exception as e:
-                        logger.error(f"Error sending daily challenge to feed channel {cid}: {e}")
-                
+                        logger.error(
+                            f"Error sending daily challenge to feed channel {cid}: {e}"
+                        )
+
+                # Send to users who enabled daily challenge reminders
+                try:
+                    daily_users = await db.get_users_with_daily_reminders()
+                    for uid in daily_users:
+                        try:
+                            await bot.send_message(
+                                chat_id=uid,
+                                text=daily_summary_msg,
+                                parse_mode="HTML",
+                                reply_markup=dm_keyboard,
+                                disable_web_page_preview=True,
+                            )
+                            await asyncio.sleep(0.05)
+                        except Exception as user_err:
+                            logger.error(
+                                f"Failed to send daily challenge reminder to user {uid}: {user_err}"
+                            )
+                except Exception as db_err:
+                    logger.error(f"Failed to fetch daily challenge users: {db_err}")
+
                 await cache_manager.set(cache_key, "1", expire_seconds=172800)
 
         # 2. Process Contests
@@ -275,10 +624,12 @@ async def poll_leetcode_feed():
             start_time = int(c["startTime"])
             duration = int(c["duration"])
             end_time = start_time + duration
-            
-            start_dt = datetime.datetime.fromtimestamp(start_time, tz=datetime.timezone.utc)
+
+            start_dt = datetime.datetime.fromtimestamp(
+                start_time, tz=datetime.timezone.utc
+            )
             duration_mins = duration // 60
-            
+
             # Registration alert (Contest is upcoming and we haven't alerted yet)
             if start_time > now_ts:
                 reg_cache_key = f"leetcode_feed:contest_alert_reg:{slug}"
@@ -293,9 +644,13 @@ async def poll_leetcode_feed():
                     )
                     for cid in channels:
                         try:
-                            await bot.send_message(chat_id=cid, text=reg_msg, parse_mode="HTML")
+                            await bot.send_message(
+                                chat_id=cid, text=reg_msg, parse_mode="HTML"
+                            )
                         except Exception as e:
-                            logger.error(f"Error sending contest reg alert to feed {cid}: {e}")
+                            logger.error(
+                                f"Error sending contest reg alert to feed {cid}: {e}"
+                            )
                     await cache_manager.set(reg_cache_key, "1", expire_seconds=604800)
 
                 # Today alert (starts in <= 12 hours)
@@ -306,8 +661,12 @@ async def poll_leetcode_feed():
                     if not today_posted:
                         hours_left = int(time_to_start // 3600)
                         mins_left = int((time_to_start % 3600) // 60)
-                        countdown_str = f"{hours_left}h {mins_left}m" if hours_left > 0 else f"{mins_left}m"
-                        
+                        countdown_str = (
+                            f"{hours_left}h {mins_left}m"
+                            if hours_left > 0
+                            else f"{mins_left}m"
+                        )
+
                         today_msg = (
                             f"⚠️ {html.bold('LeetCode Contest Today!')} 🚨\n\n"
                             f"🏆 {html.bold(html_escape(title))}\n"
@@ -318,10 +677,35 @@ async def poll_leetcode_feed():
                         )
                         for cid in channels:
                             try:
-                                await bot.send_message(chat_id=cid, text=today_msg, parse_mode="HTML")
+                                await bot.send_message(
+                                    chat_id=cid, text=today_msg, parse_mode="HTML"
+                                )
                             except Exception as e:
-                                logger.error(f"Error sending contest today alert to feed {cid}: {e}")
-                        await cache_manager.set(today_cache_key, "1", expire_seconds=86400)
+                                logger.error(
+                                    f"Error sending contest today alert to feed {cid}: {e}"
+                                )
+
+                        # Send to users who enabled contest reminders
+                        try:
+                            contest_users = await db.get_users_with_contest_reminders()
+                            for uid in contest_users:
+                                try:
+                                    await bot.send_message(
+                                        chat_id=uid, text=today_msg, parse_mode="HTML"
+                                    )
+                                    await asyncio.sleep(0.05)
+                                except Exception as user_err:
+                                    logger.error(
+                                        f"Failed to send contest today warning to user {uid}: {user_err}"
+                                    )
+                        except Exception as db_err:
+                            logger.error(
+                                f"Failed to fetch contest reminder users: {db_err}"
+                            )
+
+                        await cache_manager.set(
+                            today_cache_key, "1", expire_seconds=86400
+                        )
 
                 # Starting alert (starts in <= 5 minutes)
                 if time_to_start <= 300:
@@ -337,10 +721,35 @@ async def poll_leetcode_feed():
                         )
                         for cid in channels:
                             try:
-                                await bot.send_message(chat_id=cid, text=start_msg, parse_mode="HTML")
+                                await bot.send_message(
+                                    chat_id=cid, text=start_msg, parse_mode="HTML"
+                                )
                             except Exception as e:
-                                logger.error(f"Error sending contest start alert to feed {cid}: {e}")
-                        await cache_manager.set(start_cache_key, "1", expire_seconds=7200)
+                                logger.error(
+                                    f"Error sending contest start alert to feed {cid}: {e}"
+                                )
+
+                        # Send to users who enabled contest reminders
+                        try:
+                            contest_users = await db.get_users_with_contest_reminders()
+                            for uid in contest_users:
+                                try:
+                                    await bot.send_message(
+                                        chat_id=uid, text=start_msg, parse_mode="HTML"
+                                    )
+                                    await asyncio.sleep(0.05)
+                                except Exception as user_err:
+                                    logger.error(
+                                        f"Failed to send contest starting warning to user {uid}: {user_err}"
+                                    )
+                        except Exception as db_err:
+                            logger.error(
+                                f"Failed to fetch contest reminder users: {db_err}"
+                            )
+
+                        await cache_manager.set(
+                            start_cache_key, "1", expire_seconds=7200
+                        )
 
             # Ending alert (ended in the last 10 minutes)
             time_since_end = now_ts - end_time
@@ -355,9 +764,13 @@ async def poll_leetcode_feed():
                     )
                     for cid in channels:
                         try:
-                            await bot.send_message(chat_id=cid, text=end_msg, parse_mode="HTML")
+                            await bot.send_message(
+                                chat_id=cid, text=end_msg, parse_mode="HTML"
+                            )
                         except Exception as e:
-                            logger.error(f"Error sending contest end alert to feed {cid}: {e}")
+                            logger.error(
+                                f"Error sending contest end alert to feed {cid}: {e}"
+                            )
                     await cache_manager.set(end_cache_key, "1", expire_seconds=7200)
 
     except Exception as e:
@@ -371,6 +784,7 @@ async def poll_leetcode_feed():
             f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
         )
         from src.utils.logging_helper import send_log
+
         await send_log(error_msg, pin=True, disable_notification=False)
 
 
@@ -379,15 +793,17 @@ async def global_error_handler(event: ErrorEvent):
     exception = event.exception
     update = event.update
     logger.error(f"Unhandled exception in bot: {exception}", exc_info=exception)
-    
+
     # Extract update context
     update_str = "Unknown Update"
     try:
         update_str = update.model_dump_json(indent=2)
     except Exception:
         update_str = str(update)
-        
-    tb = "".join(traceback.format_exception(type(exception), exception, exception.__traceback__))
+
+    tb = "".join(
+        traceback.format_exception(type(exception), exception, exception.__traceback__)
+    )
     if len(tb) > 2500:
         tb = tb[:2500] + "\n...[truncated]"
 
@@ -397,8 +813,9 @@ async def global_error_handler(event: ErrorEvent):
         f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>\n\n"
         f"📥 {html.bold('Triggering Update:')}\n<pre><code class='language-json'>{html_escape(update_str[:1000])}</code></pre>"
     )
-    
+
     from src.utils.logging_helper import send_log
+
     await send_log(error_msg, pin=True, disable_notification=False)
 
 
@@ -417,18 +834,53 @@ async def lifespan(app: FastAPI):
         logger.info(f"Setting webhook to: {webhook_full_url}")
         await bot.set_webhook(url=webhook_full_url, drop_pending_updates=True)
     else:
-        logger.info("No WEBHOOK_URL found. Bot will run in polling mode asynchronously.")
+        logger.info(
+            "No WEBHOOK_URL found. Bot will run in polling mode asynchronously."
+        )
         await bot.delete_webhook(drop_pending_updates=True)
         # Run dispatcher polling in the background event loop
         asyncio.create_task(dp.start_polling(bot))
 
     # Setup scheduler jobs
     # Poll battles every minute
-    scheduler.add_job(poll_active_battles, 'interval', seconds=settings.BATTLE_POLL_INTERVAL, id='poll_battles', replace_existing=True)
+    scheduler.add_job(
+        poll_active_battles,
+        "interval",
+        seconds=settings.BATTLE_POLL_INTERVAL,
+        misfire_grace_time=60,
+        id="poll_battles",
+        replace_existing=True,
+    )
     # Check SRS reviews once a day (at 9 AM)
-    scheduler.add_job(check_srs_reviews, 'cron', hour=9, minute=0, id='srs_reviews', replace_existing=True)
+    scheduler.add_job(
+        check_srs_reviews,
+        "cron",
+        hour=9,
+        minute=0,
+        misfire_grace_time=3600,
+        id="srs_reviews",
+        replace_existing=True,
+    )
+    # Check daily solve streak at 15:00 UTC (8:30 PM IST)
+    scheduler.add_job(
+        check_streak_reminders,
+        "cron",
+        hour=15,
+        minute=0,
+        timezone="UTC",
+        misfire_grace_time=3600,
+        id="streak_reminders",
+        replace_existing=True,
+    )
     # Poll LeetCode challenge and contests every 5 minutes
-    scheduler.add_job(poll_leetcode_feed, 'interval', minutes=5, id='poll_leetcode_feed', replace_existing=True)
+    scheduler.add_job(
+        poll_leetcode_feed,
+        "interval",
+        minutes=5,
+        misfire_grace_time=60,
+        id="poll_leetcode_feed",
+        replace_existing=True,
+    )
 
     scheduler.start()
     logger.info("Scheduler started.")
@@ -436,8 +888,12 @@ async def lifespan(app: FastAPI):
     # Run LeetCode feed poll immediately on startup in a background task
     asyncio.create_task(poll_leetcode_feed())
 
+    # Run missed daily jobs check in a background task
+    asyncio.create_task(check_missed_jobs())
+
     # Send bot startup notification to log channel
     from src.utils.logging_helper import send_log
+
     startup_msg = (
         f"🤖 {html.bold('Memoize Bot is UP and Running')} 🚀\n\n"
         f"⏰ {html.bold('Started at:')} {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
@@ -457,14 +913,13 @@ async def lifespan(app: FastAPI):
         for channel_id in target_channels:
             try:
                 await bot.send_message(
-                    chat_id=channel_id,
-                    text=public_msg,
-                    parse_mode="HTML"
+                    chat_id=channel_id, text=public_msg, parse_mode="HTML"
                 )
             except Exception as e:
-                logger.error(f"Failed to send startup message to channel {channel_id}: {e}", exc_info=True)
-
-
+                logger.error(
+                    f"Failed to send startup message to channel {channel_id}: {e}",
+                    exc_info=True,
+                )
 
     yield
 
@@ -501,6 +956,7 @@ async def telegram_webhook(request: Request):
             f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
         )
         from src.utils.logging_helper import send_log
+
         await send_log(error_msg, pin=True, disable_notification=False)
         return {"status": "error", "message": str(e)}
 
@@ -513,7 +969,7 @@ async def health_check():
     return {
         "status": "healthy",
         "time": datetime.datetime.now().isoformat(),
-        "database": "connected" if db.pool else "disconnected"
+        "database": "connected" if db.pool else "disconnected",
     }
 
 
