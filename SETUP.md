@@ -45,7 +45,7 @@ Create a file named `.env` at the root of your project directory (`.env`) and po
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ
 SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_KEY=your-supabase-anon-key
-SUPABASE_DB_URL=postgresql+asyncpg://postgres:your-db-password@db.your-project-ref.supabase.co:5432/postgres
+SUPABASE_DB_URL=postgresql+asyncpg://postgres.your-project-ref:your-db-password@aws-0-region.pooler.supabase.com:6543/postgres
 REDIS_URL=rediss://default:your-redis-password@your-redis-endpoint.upstash.io:6379
 GROQ_API_KEY=gsk_your_groq_api_key
 GEMINI_API_KEY=AIzaSyYourGeminiApiKey
@@ -90,7 +90,8 @@ PORT=8000
 5. Add the exact same environment variables from your `.env` to the Koyeb Environment Variables settings.
 6. Add one additional environment variable in Koyeb:
    * `WEBHOOK_URL`: `https://[your-koyeb-app-name].koyeb.app` (replaces polling with high-performance webhook delivery).
-7. Koyeb will automatically detect the [Dockerfile](Dockerfile) or [Procfile](Procfile), build, and launch your bot in webhook mode.
+7. In the **Ports** section, set port `8000` with protocol `HTTP` and **leave the Path field empty** (do not fill in `/health` or any path — an empty path exposes all routes publicly, which is required for the `/webhook` endpoint to work).
+8. Koyeb will automatically detect the [Dockerfile](Dockerfile) or [Procfile](Procfile), build, and launch your bot in webhook mode.
 
 ---
 
