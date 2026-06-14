@@ -229,7 +229,7 @@ async def telegram_webhook(request: Request):
         return {"status": "error", "message": str(e)}
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     """
     Health check endpoint pinged by UptimeRobot.
