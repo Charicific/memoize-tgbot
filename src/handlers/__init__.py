@@ -6,6 +6,7 @@ from .ai import router as ai_router
 from .community import router as community_router
 from .streaks import router as streaks_router
 from .admin import router as admin_router
+from .visualize import router as visualize_router
 
 def get_main_router() -> Router:
     main_router = Router()
@@ -16,4 +17,5 @@ def get_main_router() -> Router:
     main_router.include_router(community_router)
     main_router.include_router(streaks_router)
     main_router.include_router(admin_router)
+    main_router.include_router(visualize_router)
     return main_router

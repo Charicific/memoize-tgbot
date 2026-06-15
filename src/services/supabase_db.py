@@ -66,6 +66,45 @@ class SupabaseDB:
                 """)
                 logger.info("Checked/Created group_battle_mutes table.")
 
+                # Check/create group_battles table
+                await self.execute("""
+                CREATE TABLE IF NOT EXISTS group_battles (
+                    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                    group_id BIGINT NOT NULL,
+                    problem_slug VARCHAR(255) NOT NULL,
+                    problem_title VARCHAR(255) NOT NULL,
+                    difficulty VARCHAR(50) NOT NULL,
+                    status VARCHAR(50) DEFAULT 'PENDING',
+                    created_by BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    starts_at TIMESTAMP WITH TIME ZONE,
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    message_id BIGINT
+                );
+                """)
+                logger.info("Checked/Created group_battles table.")
+
+                # Check/create group_battle_participants table
+                await self.execute("""
+                CREATE TABLE IF NOT EXISTS group_battle_participants (
+                    group_battle_id UUID REFERENCES group_battles(id) ON DELETE CASCADE,
+                    telegram_id BIGINT REFERENCES users(telegram_id) ON DELETE CASCADE,
+                    joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    solved_at TIMESTAMP WITH TIME ZONE,
+                    solve_time_seconds INT,
+                    PRIMARY KEY (group_battle_id, telegram_id)
+                );
+                """)
+                logger.info("Checked/Created group_battle_participants table.")
+
+                # Create performance indexes
+                await self.execute("CREATE INDEX IF NOT EXISTS idx_problem_history_solved_at ON problem_history(solved_at);")
+                await self.execute("CREATE INDEX IF NOT EXISTS idx_srs_reviews_next_date ON srs_reviews(next_review_date);")
+                await self.execute("CREATE INDEX IF NOT EXISTS idx_battles_status ON battles(status);")
+                await self.execute("CREATE INDEX IF NOT EXISTS idx_group_members_id ON group_members(telegram_id);")
+                await self.execute("CREATE INDEX IF NOT EXISTS idx_group_battles_status ON group_battles(status);")
+                logger.info("Initialized performance database indexes.")
+
                 # Add paused_at and remaining_seconds columns to battles table
                 await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE;")
                 await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS remaining_seconds INT;")
@@ -84,16 +123,55 @@ class SupabaseDB:
             logger.info("Database connection pool closed.")
 
     async def execute(self, query: str, *args) -> str:
+        import time
+        start = time.time()
         async with self.pool.acquire() as conn:
-            return await conn.execute(query, *args)
+            res = await conn.execute(query, *args)
+        latency = (time.time() - start) * 1000
+        if latency > 500:
+            logger.warning(f"SLOW DB Execute ({latency:.1f}ms): {query[:200]}")
+            try:
+                from src.utils.logging_helper import send_log
+                from html import escape as html_escape
+                import asyncio
+                asyncio.create_task(send_log(f"⚠️ <b>Slow DB Execution</b> ({latency:.1f}ms):\n<code>{html_escape(query[:300])}</code>", disable_notification=True))
+            except Exception:
+                pass
+        return res
 
     async def fetch(self, query: str, *args) -> List[asyncpg.Record]:
+        import time
+        start = time.time()
         async with self.pool.acquire() as conn:
-            return await conn.fetch(query, *args)
+            res = await conn.fetch(query, *args)
+        latency = (time.time() - start) * 1000
+        if latency > 500:
+            logger.warning(f"SLOW DB Fetch ({latency:.1f}ms): {query[:200]}")
+            try:
+                from src.utils.logging_helper import send_log
+                from html import escape as html_escape
+                import asyncio
+                asyncio.create_task(send_log(f"⚠️ <b>Slow DB Fetch</b> ({latency:.1f}ms):\n<code>{html_escape(query[:300])}</code>", disable_notification=True))
+            except Exception:
+                pass
+        return res
 
     async def fetchrow(self, query: str, *args) -> Optional[asyncpg.Record]:
+        import time
+        start = time.time()
         async with self.pool.acquire() as conn:
-            return await conn.fetchrow(query, *args)
+            res = await conn.fetchrow(query, *args)
+        latency = (time.time() - start) * 1000
+        if latency > 500:
+            logger.warning(f"SLOW DB Fetchrow ({latency:.1f}ms): {query[:200]}")
+            try:
+                from src.utils.logging_helper import send_log
+                from html import escape as html_escape
+                import asyncio
+                asyncio.create_task(send_log(f"⚠️ <b>Slow DB Fetchrow</b> ({latency:.1f}ms):\n<code>{html_escape(query[:300])}</code>", disable_notification=True))
+            except Exception:
+                pass
+        return res
 
     # --- Users ---
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
@@ -120,6 +198,18 @@ class SupabaseDB:
         RETURNING *
         """
         row = await self.fetchrow(query, telegram_id, xp, coins)
+        if row:
+            try:
+                from src.services.redis_cache import cache_manager
+                # Invalidate global leaderboard cache
+                await cache_manager.delete("global_leaderboard")
+                
+                # Invalidate group leaderboard cache for all groups user belongs to
+                groups = await self.fetch("SELECT group_id FROM group_members WHERE telegram_id = $1", telegram_id)
+                for g in groups:
+                    await cache_manager.delete(f"group_leaderboard:{g['group_id']}")
+            except Exception as e:
+                logger.error(f"Error invalidating leaderboard cache in add_xp_coins: {e}")
         return dict(row) if row else None
 
     # --- Linked Accounts ---
@@ -408,6 +498,77 @@ class SupabaseDB:
             # Treat as Telegram Username
             row = await self.fetchrow("SELECT * FROM users WHERE LOWER(username) = LOWER($1)", cleaned)
         return dict(row) if row else None
+
+    # --- Group Battles ---
+    async def create_group_battle(self, group_id: int, problem_slug: str, problem_title: str, difficulty: str, created_by: int, expires_at: datetime.datetime) -> Dict[str, Any]:
+        query = """
+        INSERT INTO group_battles (group_id, problem_slug, problem_title, difficulty, status, created_by, expires_at)
+        VALUES ($1, $2, $3, $4, 'PENDING', $5, $6)
+        RETURNING *
+        """
+        row = await self.fetchrow(query, group_id, problem_slug, problem_title, difficulty, created_by, expires_at)
+        return dict(row)
+
+    async def update_group_battle_message(self, battle_id: str, message_id: int):
+        await self.execute(
+            "UPDATE group_battles SET message_id = $2 WHERE id = $1::uuid",
+            battle_id, message_id
+        )
+
+    async def get_group_battle(self, battle_id: str) -> Optional[Dict[str, Any]]:
+        row = await self.fetchrow("SELECT * FROM group_battles WHERE id = $1::uuid", battle_id)
+        return dict(row) if row else None
+
+    async def get_active_group_battles(self) -> List[Dict[str, Any]]:
+        rows = await self.fetch("SELECT * FROM group_battles WHERE status IN ('PENDING', 'ACTIVE')")
+        return [dict(r) for r in rows]
+
+    async def update_group_battle_status(self, battle_id: str, status: str, starts_at: Optional[datetime.datetime] = None, expires_at: Optional[datetime.datetime] = None) -> Optional[Dict[str, Any]]:
+        query = """
+        UPDATE group_battles
+        SET status = $2,
+            starts_at = COALESCE($3, starts_at),
+            expires_at = COALESCE($4, expires_at)
+        WHERE id = $1::uuid
+        RETURNING *
+        """
+        row = await self.fetchrow(query, battle_id, status, starts_at, expires_at)
+        return dict(row) if row else None
+
+    async def join_group_battle(self, group_battle_id: str, telegram_id: int) -> bool:
+        # Check if already joined
+        row = await self.fetchrow(
+            "SELECT 1 FROM group_battle_participants WHERE group_battle_id = $1::uuid AND telegram_id = $2",
+            group_battle_id, telegram_id
+        )
+        if row:
+            return False
+        
+        await self.execute(
+            "INSERT INTO group_battle_participants (group_battle_id, telegram_id) VALUES ($1::uuid, $2)",
+            group_battle_id, telegram_id
+        )
+        return True
+
+    async def get_group_battle_participants(self, group_battle_id: str) -> List[Dict[str, Any]]:
+        query = """
+        SELECT gbp.*, u.username, u.first_name, u.xp, u.level
+        FROM group_battle_participants gbp
+        JOIN users u ON gbp.telegram_id = u.telegram_id
+        WHERE gbp.group_battle_id = $1::uuid
+        ORDER BY gbp.joined_at ASC
+        """
+        rows = await self.fetch(query, group_battle_id)
+        return [dict(r) for r in rows]
+
+    async def update_group_participant_solve(self, group_battle_id: str, telegram_id: int, solved_at: datetime.datetime, solve_time_seconds: int):
+        query = """
+        UPDATE group_battle_participants
+        SET solved_at = $3,
+            solve_time_seconds = $4
+        WHERE group_battle_id = $1::uuid AND telegram_id = $2
+        """
+        await self.execute(query, group_battle_id, telegram_id, solved_at, solve_time_seconds)
 
 # Global DB Instance
 db = SupabaseDB()

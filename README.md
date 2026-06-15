@@ -87,15 +87,36 @@ Traditional LeetCode practice is isolating, browser-locked, and prone to the **f
 * **Daily Reminders:** Database cron checks trigger notifications about due reviews so you never break your retention schedule.
 
 ### Multiplayer Coding Battles
-* **1v1 Challenges:** Invite any friend via `/battle @username`. The bot selects a random medium-difficulty problem.
+* **1v1 Challenges:** Invite any friend via `/battle @username`. The bot selects a random problem matching difficulty and tag filters.
 * **Real-time Submission Polling:** The bot runs background checks on LeetCode submission history to see who solved it first.
 * **Gamified Rewards:** The winner receives 100 XP and 20 coins, while the loser gets 20 XP for competing.
 * **Expiration Timers:** Battles automatically expire after 60 minutes if unresolved.
+
+### Interactive Battle Controls
+* **In-Game Timer Adjustments:** Support for pausing (`/pausebattle`) and resuming (`/resumebattle`) active battles via two-way player confirmation or administrative command override.
+* **Resume Inactivity Timeout:** If a paused battle is requested to be resumed, the opponent has 5 minutes to accept, or they automatically forfeit.
+* **Draw Proposals & Forfeits:** Propose a draw via `/stopbattle`. If accepted, the battle ends. If declined, the proposer can forfeit (giving the opponent a full win) or resume playing.
+
+### Submission & Daily Challenge Streak Tracking
+* **LeetCode Profile Streak (`/streak`):** Dynamically parses your LeetCode profile calendar to display your current streak, longest streak, and total active days.
+* **Daily Challenge Streak (`/dstreak`):** Tracks consecutive daily challenge solves logged in the bot database.
+* **Streak Protection Scheduler:** A background task runs daily at 15:00 UTC (8:30 PM IST) to check user activity. If you've solved today's daily challenge on LeetCode but haven't logged it, the bot **auto-logs the solve** to save your streak and awards 15 XP & 5 coins. If no solve is found, the bot sends a **streak warning alert** to remind you to practice.
+* **Custom Reminders (`/reminders`):** Toggle alerts in private DMs for daily challenge drops, streak warnings, and contest announcements.
 
 ### AI Coaching (Groq + Gemini)
 * **Progressive Hints (`/hint`):** Returns hints step-by-step (Conceptual $\rightarrow$ Strategic $\rightarrow$ Pseudo-code) using Groq (Llama 3.3 70B) to help you learn without spoiling solutions.
 * **Complexity Analyst (`/analyze`):** Detailed Big-O analysis of your pasted code or in response to a replied code block.
 * **Gemini Code Review (`/review`):** Structural code audit assessing correctness, edge cases, readability, and providing optimized alternatives via Gemini 2.0 Flash.
+
+### Group Settings & Moderation
+* **Custom Group Toggles (`/config_group <setting> <enable/disable>`):** Group admins can toggle group-specific features, including whether `battles` or the LeetCode `feed` are enabled.
+* **Member Moderation (`/mute_battle <user> <on/off>`):** Group owners can mute specific members from starting/participating in battles.
+* **Group Reset (`/clear_group_history`):** Group owners can clear the group leaderboard and reset stats.
+
+### Global Bot Administration & Security
+* **Global Security Roles:** Security layer defining levels `USER`, `GROUP_ADMIN`, `GROUP_OWNER`, `COORDINATOR`, and `SUPER_ADMIN`.
+* **Bans & Moderation:** Global coordinators can ban (`/pban`) and unban (`/unpban`) users, check details (`/userinfo`), force verify LeetCode usernames (`/forceverify`), and monitor active battles (`/activebattles`).
+* **Super Admin Operations:** Super Admins can promote/demote coordinators (`/setrole`), enable/disable global maintenance mode (`/maintenance`), and broadcast announcements (`/broadcast`).
 
 ---
 
@@ -242,21 +263,32 @@ memoize-tgbot/
 │   ├── config.py                   # App config loading settings from .env
 │   ├── main.py                     # App Server startup (FastAPI + aiogram)
 │   │
-│   ├── handlers/                # Telegram command Handlers
+│   ├── handlers/                   # Telegram command Handlers
 │   │   ├── __init__.py             #   └── Router registrations
-│   │   ├── common.py               #   └── /start, /help, /link, /verify, /profile
+│   │   ├── common.py               #   └── /start, /help, /link, /verify, /profile, /reminders, /myrole
 │   │   ├── daily.py                #   └── /daily, /contest, /random
 │   │   ├── srs.py                  #   └── /solved grading & callback flows
 │   │   ├── ai.py                   #   └── /hint, /analyze, /review
-│   │   └── community.py            #   └── /leaderboard, /battle
+│   │   ├── community.py            #   └── /leaderboard, /gleaderboard, /battle, /stopbattle, /pausebattle, /resumebattle
+│   │   ├── admin.py                #   └── /setrole, /maintenance, /broadcast, /pban, /unpban, /forceverify, /userinfo, /activebattles
+│   │   └── streaks.py              #   └── /streak, /dstreak
 │   │
-│   └── services/                # Business logic and external clients
-│       ├── __init__.py
-│       ├── leetcode.py             #   └── LeetCode GraphQL custom API calls
-│       ├── supabase_db.py          #   └── supbase direct queries via asyncpg pool
-│       ├── redis_cache.py          #   └── Upstash cache operations & FSM storage
-│       ├── ai_service.py           #   └── Groq & Gemini Flash API client logic
-│       └── srs_service.py          #   └── SM-2 spaced repetition calculator
+│   ├── middlewares/                # Custom aiogram middlewares
+│   │   ├── ban_middleware.py       #   └── Banned user request interceptor
+│   │   └── maintenance_middleware.py#  └── Maintenance mode request blocker
+│   │
+│   ├── services/                   # Business logic and external clients
+│   │   ├── __init__.py
+│   │   ├── leetcode.py             #   └── LeetCode GraphQL custom API calls
+│   │   ├── supabase_db.py          #   └── Supabase direct queries via asyncpg pool
+│   │   ├── redis_cache.py          #   └── Upstash cache operations & FSM storage
+│   │   ├── ai_service.py           #   └── Groq & Gemini Flash API client logic
+│   │   └── srs_service.py          #   └── SM-2 spaced repetition calculator
+│   │
+│   └── utils/                      # Helper utilities
+│       ├── formatters.py           #   └── HTML descriptions parser & cleaning
+│       ├── logging_helper.py       #   └── Administrative activity log channel sender
+│       └── roles.py                #   └── User security roles resolution
 │
 ├── tests/
 │   └── test_leetcode.py            # Integration query testing scripts

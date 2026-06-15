@@ -125,4 +125,56 @@ Please structure your review using the following sections in Markdown:
             logger.error(f"Error in Gemini generate_code_review: {e}")
             return None
 
+    async def generate_flowchart_mermaid(self, code_snippet: str) -> Optional[Tuple[str, str]]:
+        """
+        Generates a Mermaid flowchart diagram and step-by-step execution trace.
+        Returns a tuple of (mermaid_code, execution_trace) or None.
+        """
+        prompt = f"""
+You are an expert algorithms and compiler visualizer.
+Your goal is to parse and trace the execution flow of the following code snippet and return:
+1. A valid, clean Mermaid flowchart representing its control flow or recursion tree.
+2. A step-by-step execution trace with variable values for a sample input.
+
+Code:
+{code_snippet}
+
+Instructions for Mermaid:
+- Start with `graph TD` or `flowchart TD`.
+- Do not use HTML tags in node labels. Quote labels with double quotes.
+- Keep the flowchart clear and structured.
+
+Format your output EXACTLY as follows with the custom delimiter "|||":
+[ONLY VALID MERMAID GRAPH CODE]
+|||
+[STEP-BY-STEP TRACE EXPLANATION IN TELEGRAM-COMPATIBLE HTML FORMAT (use only <b>, <i>, <code>, <pre>, and <u> tags; DO NOT use <p>, <br>, <ul>, or <li> tags. Use standard newlines for lists and spacing.)]
+"""
+        try:
+            chat_completion = await self.groq_client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "You are a helpful software visualization assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                model="llama-3.3-70b-versatile",
+                temperature=0.2
+            )
+            content = chat_completion.choices[0].message.content
+            parts = [p.strip() for p in content.split("|||")]
+            if len(parts) >= 2:
+                # Clean up markdown code blocks if the LLM included them
+                mermaid_code = parts[0]
+                if mermaid_code.startswith("```"):
+                    mermaid_lines = mermaid_code.splitlines()
+                    if len(mermaid_lines) >= 2:
+                        if mermaid_lines[0].startswith("```"):
+                            mermaid_lines = mermaid_lines[1:]
+                        if mermaid_lines[-1].startswith("```"):
+                            mermaid_lines = mermaid_lines[:-1]
+                        mermaid_code = "\n".join(mermaid_lines).strip()
+                return mermaid_code, parts[1]
+            return None
+        except Exception as e:
+            logger.error(f"Error in generate_flowchart_mermaid: {e}")
+            return None
+
 ai_service = AIService()

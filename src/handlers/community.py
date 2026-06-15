@@ -257,6 +257,90 @@ async def cmd_battle(message: Message, command: CommandObject):
     if not challenger_link or not challenger_link["verified"]:
         await message.reply(f"⚠️ You must link and verify your own LeetCode account first using {html.code('/link &lt;username&gt;')}!", parse_mode="HTML")
         return
+
+    # Check if this is an open battle challenge in a group
+    is_open_battle = False
+    args_list = []
+    if chat_type in ["group", "supergroup"] and command.args:
+        args_split = command.args.split()
+        if args_split[0].lower() == "open":
+            is_open_battle = True
+            args_list = args_split[1:]
+
+    if is_open_battle:
+        difficulty, tag_slug = parse_battle_args(args_list)
+        if not difficulty:
+            difficulty = random.choice(["easy", "medium", "hard"])
+        difficulty_str = difficulty.capitalize()
+        filter_info = difficulty_str
+        if tag_slug:
+            filter_info += f" with tag: {tag_slug}"
+            
+        progress_msg = await message.reply(f"🎲 Selecting a random {filter_info} problem... Please wait.")
+        problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty, tag_slug=tag_slug)
+        free_problems = [p for p in problems if not p.get("isPaidOnly")]
+        if not free_problems and tag_slug:
+            await progress_msg.edit_text(
+                f"⚠️ Could not find any free problems with tag {html.code(tag_slug)} ({difficulty_str}).\n"
+                f"Selecting a random {difficulty_str} problem instead.",
+                parse_mode="HTML"
+            )
+            problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty)
+            free_problems = [p for p in problems if not p.get("isPaidOnly")]
+            tag_slug = None
+        if not free_problems:
+            await progress_msg.edit_text("❌ Error picking a battle problem. Please try again.")
+            return
+            
+        selected_prob = random.choice(free_problems)
+        problem_slug = selected_prob["titleSlug"]
+        problem_title = selected_prob["title"]
+        
+        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+        
+        battle = await db.create_group_battle(
+            group_id=message.chat.id,
+            problem_slug=problem_slug,
+            problem_title=problem_title,
+            difficulty=difficulty_str,
+            created_by=user_id,
+            expires_at=expires_at
+        )
+        battle_id = battle["id"]
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🎮 Join Battle", callback_data=f"gbattle_join:{battle_id}"),
+                InlineKeyboardButton(text="🏁 Start Battle", callback_data=f"gbattle_start:{battle_id}")
+            ]
+        ])
+        
+        creator_name = message.from_user.first_name or message.from_user.username or "Challenger"
+        invitation_info = difficulty_str
+        if tag_slug:
+            invitation_info += f" (Tag: {tag_slug})"
+            
+        invite_msg = (
+            f"⚔️ {html.bold('LeetCode Group Battle Arena Open!')} ⚔️\n\n"
+            f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+            f"👤 Host: {html.bold(creator_name)}\n"
+            f"🏆 Problem Category: {html.bold(invitation_info)}\n"
+            f"⏳ Time Limit: {html.bold('60 minutes')} (once started)\n\n"
+            f"👉 Click {html.bold('Join Battle')} below to enter the arena! "
+            f"All registered group members can participate.\n"
+            f"Host, click {html.bold('Start Battle')} once players have joined."
+        )
+        
+        await progress_msg.delete()
+        sent_msg = await message.bot.send_message(
+            chat_id=message.chat.id,
+            text=invite_msg,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        await db.update_group_battle_message(str(battle_id), sent_msg.message_id)
+        return
+
     challenger_in_battle = await db.fetchrow(
         "SELECT id FROM battles WHERE (challenger_id = $1 OR opponent_id = $1) AND status IN ('ACTIVE', 'PAUSED')",
         user_id
@@ -1105,4 +1189,110 @@ async def process_resume_accept(callback_query: CallbackQuery):
         parse_mode="HTML"
     )
     await callback_query.answer("Battle resumed.")
+
+
+# --- Group Battles Callbacks ---
+
+@router.callback_query(F.data.startswith("gbattle_join:"))
+async def process_gbattle_join(callback_query: CallbackQuery):
+    battle_id = callback_query.data.split(":")[1]
+    battle = await db.get_group_battle(battle_id)
+    if not battle:
+        await callback_query.answer("⚠️ Battle not found.", show_alert=True)
+        return
+    if battle["status"] != "PENDING":
+        await callback_query.answer(f"⚠️ This battle is already {battle['status'].lower()}.", show_alert=True)
+        return
+        
+    user_id = callback_query.from_user.id
+    user_row = await db.get_user(user_id)
+    link = await db.get_linked_account(user_id)
+    if not user_row or not link or not link["verified"]:
+        bot_user = await callback_query.bot.get_me()
+        await callback_query.answer(
+            f"⚠️ You must register and verify your LeetCode account first! "
+            f"Go to DM @{bot_user.username} and run /link.",
+            show_alert=True
+        )
+        return
+        
+    joined = await db.join_group_battle(battle_id, user_id)
+    if not joined:
+        await callback_query.answer("ℹ️ You have already joined this battle!", show_alert=True)
+        return
+        
+    await callback_query.answer("🎉 You have successfully joined the battle!")
+    
+    participants = await db.get_group_battle_participants(battle_id)
+    part_list_str = "\n".join([f"{idx}. {p['first_name'] or p['username'] or str(p['telegram_id'])}" for idx, p in enumerate(participants, start=1)])
+    
+    creator_row = await db.get_user(battle["created_by"])
+    creator_name = creator_row["first_name"] or creator_row["username"] if creator_row else "Challenger"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎮 Join Battle", callback_data=f"gbattle_join:{battle_id}"),
+            InlineKeyboardButton(text="🏁 Start Battle", callback_data=f"gbattle_start:{battle_id}")
+        ]
+    ])
+    
+    updated_msg = (
+        f"⚔️ {html.bold('LeetCode Group Battle Arena Open!')} ⚔️\n\n"
+        f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+        f"👤 Host: {html.bold(creator_name)}\n"
+        f"🏆 Problem Category: {html.bold(battle['difficulty'])}\n"
+        f"⏳ Time Limit: {html.bold('60 minutes')} (once started)\n\n"
+        f"👥 {html.bold('Participants Joined:')}\n{part_list_str}\n\n"
+        f"👉 Click {html.bold('Join Battle')} below to enter the arena!\n"
+        f"Host, click {html.bold('Start Battle')} once players have joined."
+    )
+    
+    try:
+        await callback_query.message.edit_text(updated_msg, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("gbattle_start:"))
+async def process_gbattle_start(callback_query: CallbackQuery):
+    battle_id = callback_query.data.split(":")[1]
+    battle = await db.get_group_battle(battle_id)
+    if not battle:
+        await callback_query.answer("⚠️ Battle not found.", show_alert=True)
+        return
+    if battle["status"] != "PENDING":
+        await callback_query.answer(f"⚠️ This battle is already {battle['status'].lower()}.", show_alert=True)
+        return
+        
+    clicker_id = callback_query.from_user.id
+    from src.utils.roles import get_user_role, UserRole
+    role = await get_user_role(clicker_id, callback_query.message.chat.id, callback_query.message.chat.type, callback_query.bot)
+    if clicker_id != battle["created_by"] and role < UserRole.GROUP_ADMIN:
+        await callback_query.answer("⚠️ Only the battle host or a group administrator can start this battle.", show_alert=True)
+        return
+        
+    participants = await db.get_group_battle_participants(battle_id)
+    if not participants:
+        await callback_query.answer("⚠️ Cannot start battle. At least 1 participant must join first!", show_alert=True)
+        return
+        
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expires_at = now + datetime.timedelta(hours=1)
+    
+    await db.update_group_battle_status(battle_id, "ACTIVE", starts_at=now, expires_at=expires_at)
+    
+    battle_url = f"https://leetcode.com/problems/{battle['problem_slug']}"
+    players_str = "\n".join([f"• {p['first_name'] or p['username'] or str(p['telegram_id'])} (⌛ Coding...)" for p in participants])
+    
+    start_msg = (
+        f"⚔️ {html.bold('Group Battle Started!')} ⚔️\n\n"
+        f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+        f"🏆 Problem: <a href='{battle_url}'>{battle['problem_title']}</a> ({battle['difficulty']})\n"
+        f"⏳ Deadline: {html.code('60 minutes')} from now\n\n"
+        f"👥 {html.bold('Players in Arena:')}\n{players_str}\n\n"
+        f"🚀 Solve the problem on LeetCode and submit it! The bot will automatically check and compile the leaderboard."
+    )
+    
+    await callback_query.message.edit_text(start_msg, parse_mode="HTML", disable_web_page_preview=True)
+    await callback_query.answer("Battle started!")
 

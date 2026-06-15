@@ -261,6 +261,195 @@ async def poll_active_battles():
         await send_log(error_msg, pin=True, disable_notification=False)
 
 
+async def end_group_battle(battle, participants, expired: bool):
+    battle_id = str(battle["id"])
+    group_id = battle["group_id"]
+    
+    # Sort: those who solved first, then unsolved
+    solved_players = [p for p in participants if p["solved_at"] is not None]
+    unsolved_players = [p for p in participants if p["solved_at"] is None]
+    
+    solved_players.sort(key=lambda x: x["solve_time_seconds"] or 999999)
+    unsolved_players.sort(key=lambda x: x["joined_at"])
+    
+    final_ranking = solved_players + unsolved_players
+    
+    leaderboard_text = f"🏁 {html.bold('Group Battle Ended!')} 🏁\n\n"
+    if expired:
+        leaderboard_text += "⏱️ Time limit of 60 minutes reached!\n\n"
+    else:
+        leaderboard_text += "🎉 All participants completed the challenge!\n\n"
+        
+    leaderboard_text += f"🏆 Problem: {battle['problem_title']} ({battle['difficulty']})\n\n"
+    leaderboard_text += f"👥 {html.bold('Final Battle Leaderboard:')}\n"
+    
+    for rank, p in enumerate(final_ranking, start=1):
+        name = p["first_name"] or p["username"] or f"User {p['telegram_id']}"
+        if p["solved_at"] is not None:
+            time_str = f"{p['solve_time_seconds'] // 60}m {p['solve_time_seconds'] % 60}s"
+            status_str = f"✅ Solved in {time_str}"
+            
+            # Distribute rewards based on rank
+            if rank == 1:
+                xp, coins = 150, 30
+                medal = "🥇"
+            elif rank == 2:
+                xp, coins = 100, 20
+                medal = "🥈"
+            elif rank == 3:
+                xp, coins = 75, 15
+                medal = "🥉"
+            else:
+                xp, coins = 50, 10
+                medal = "🎖️"
+        else:
+            status_str = "❌ Unsolved"
+            xp, coins = 10, 0
+            medal = "⚫"
+            
+        try:
+            await db.add_xp_coins(p["telegram_id"], xp=xp, coins=coins)
+        except Exception as add_err:
+            logger.error(f"Error adding XP/coins in end_group_battle for {p['telegram_id']}: {add_err}")
+            
+        leaderboard_text += f"{medal} {rank}. {html.bold(name)} — {status_str} (Awarded +{xp} XP, +{coins} coins)\n"
+
+    try:
+        await bot.send_message(chat_id=group_id, text=leaderboard_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error sending final group battle leaderboard: {e}")
+        
+    # Log battle completed to log channel
+    from src.utils.logging_helper import send_log
+    log_text = (
+        f"🏆 {html.bold('Group LeetCode Battle Completed')} 🏆\n\n"
+        f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
+        f"• {html.bold('Group ID:')} {html.code(str(group_id))}\n"
+        f"• {html.bold('Problem:')} {battle['problem_title']}\n"
+        f"• {html.bold('Total Players:')} {len(participants)}\n"
+        f"• {html.bold('Winner:')} {final_ranking[0]['first_name'] or final_ranking[0]['username'] if final_ranking else 'None'}"
+    )
+    await send_log(log_text, disable_notification=True)
+
+
+async def poll_active_group_battles():
+    """
+    Background scheduler job to poll active open group battles every minute.
+    """
+    logger.info("Polling active group battles...")
+    try:
+        active_battles = await db.get_active_group_battles()
+        for battle in active_battles:
+            battle_id = str(battle["id"])
+            group_id = battle["group_id"]
+            now = datetime.datetime.now(datetime.timezone.utc)
+            
+            expires_at = battle["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            elif expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+
+            starts_at = battle["starts_at"]
+            if starts_at:
+                if isinstance(starts_at, str):
+                    starts_at = datetime.datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+                elif starts_at.tzinfo is None:
+                    starts_at = starts_at.replace(tzinfo=datetime.timezone.utc)
+
+            participants = await db.get_group_battle_participants(battle_id)
+            if not participants:
+                continue
+
+            # Handle PENDING battles expiration (5 minutes timeout if never started)
+            if battle["status"] == "PENDING":
+                created_at = battle["created_at"]
+                if isinstance(created_at, str):
+                    created_at = datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                elif created_at and created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=datetime.timezone.utc)
+                
+                # Check 5 minutes timeout
+                if now > (created_at + datetime.timedelta(minutes=5)):
+                    await db.update_group_battle_status(battle_id, "CANCELLED")
+                    try:
+                        await bot.send_message(
+                            chat_id=group_id,
+                            text=f"⏳ The Group Battle challenge for {html.bold(battle['problem_title'])} has been cancelled because it was not started within 5 minutes.",
+                            parse_mode="HTML"
+                        )
+                    except Exception as msg_err:
+                        logger.error(f"Error sending group battle cancellation: {msg_err}")
+                continue
+
+            # Check expiration for ACTIVE battles
+            if now > expires_at and battle["status"] == "ACTIVE":
+                await db.update_group_battle_status(battle_id, "COMPLETED")
+                await end_group_battle(battle, participants, expired=True)
+                continue
+
+            if battle["status"] != "ACTIVE":
+                continue
+
+            solves_updated = False
+            for p in participants:
+                if p["solved_at"] is not None:
+                    continue
+                
+                link = await db.get_linked_account(p["telegram_id"])
+                if not link or not link["verified"]:
+                    continue
+                
+                leetcode_user = link["leetcode_username"]
+                try:
+                    subs = await leetcode_client.get_recent_accepted_submissions(leetcode_user, limit=5)
+                    for sub in subs:
+                        if sub["titleSlug"] == battle["problem_slug"]:
+                            sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
+                            if sub_time > starts_at:
+                                solve_time = int((sub_time - starts_at).total_seconds())
+                                await db.update_group_participant_solve(battle_id, p["telegram_id"], sub_time, solve_time)
+                                p["solved_at"] = sub_time
+                                p["solve_time_seconds"] = solve_time
+                                solves_updated = True
+                                
+                                solved_msg = (
+                                    f"🎉 {html.bold('LeetCode Group Battle Solve!')} 🏆\n\n"
+                                    f"• Player: <a href='tg://user?id={p['telegram_id']}'>{p['first_name'] or p['username']}</a>\n"
+                                    f"• Problem: {battle['problem_title']}\n"
+                                    f"• Time Taken: {solve_time // 60}m {solve_time % 60}s\n\n"
+                                    f"Great job! Keep it up! 💪"
+                                )
+                                try:
+                                    await bot.send_message(chat_id=group_id, text=solved_msg, parse_mode="HTML")
+                                except Exception as e:
+                                    logger.error(f"Error sending solve notification to group {group_id}: {e}")
+                                break
+                except Exception as sub_err:
+                    logger.error(f"Error polling submissions for group battle player {leetcode_user}: {sub_err}")
+
+            # Check if everyone has solved
+            all_solved = all(p["solved_at"] is not None for p in participants)
+            if all_solved and solves_updated:
+                # Refresh list and close battle
+                participants = await db.get_group_battle_participants(battle_id)
+                await db.update_group_battle_status(battle_id, "COMPLETED")
+                await end_group_battle(battle, participants, expired=False)
+                
+    except Exception as e:
+        logger.error(f"Error in poll_active_group_battles: {e}", exc_info=True)
+        tb = traceback.format_exc()
+        if len(tb) > 2500:
+            tb = tb[:2500] + "\n...[truncated]"
+        error_msg = (
+            f"🚨 {html.bold('CRITICAL: Error in Background Task (poll_active_group_battles)')} 🚨\n\n"
+            f"⚠️ {html.bold('Error:')} {html.code(str(e))}\n\n"
+            f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
+        )
+        from src.utils.logging_helper import send_log
+        await send_log(error_msg, pin=True, disable_notification=False)
+
+
 async def check_srs_reviews():
     """
     Daily check for pending reviews and notify users.
@@ -852,6 +1041,15 @@ async def lifespan(app: FastAPI):
         id="poll_battles",
         replace_existing=True,
     )
+    # Poll group battles every minute
+    scheduler.add_job(
+        poll_active_group_battles,
+        "interval",
+        seconds=settings.BATTLE_POLL_INTERVAL,
+        misfire_grace_time=60,
+        id="poll_group_battles",
+        replace_existing=True,
+    )
     # Check SRS reviews once a day (at 9 AM)
     scheduler.add_job(
         check_srs_reviews,
@@ -934,6 +1132,28 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_request_latency(request: Request, call_next):
+    import time
+    start_time = time.time()
+    response = await call_next(request)
+    latency = (time.time() - start_time) * 1000
+    if latency > 500:
+        logger.warning(f"SLOW HTTP Request ({latency:.1f}ms): {request.method} {request.url.path}")
+        try:
+            from src.utils.logging_helper import send_log
+            from html import escape as html_escape
+            import asyncio
+            asyncio.create_task(send_log(
+                f"⚠️ <b>Slow HTTP Request</b> ({latency:.1f}ms)\n"
+                f"Path: <code>{html_escape(request.method)} {html_escape(request.url.path)}</code>",
+                disable_notification=True
+            ))
+        except Exception:
+            pass
+    return response
 
 
 @app.post(settings.WEBHOOK_PATH)

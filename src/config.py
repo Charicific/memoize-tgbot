@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     PUBLIC_CHANNEL_ID: str = ""
     LEETCODE_FEED_CHANNEL_ID: str = ""
     SUPER_ADMIN_IDS: str = ""
+    PROXIES: str = ""
+
+    @property
+    def proxies_list(self) -> list[str]:
+        if not self.PROXIES:
+            return []
+        return [x.strip() for x in self.PROXIES.split(",") if x.strip()]
 
     @property
     def public_channels(self) -> list[int]:

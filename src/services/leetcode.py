@@ -1,27 +1,71 @@
 import logging
+import random
 import httpx
 from typing import Optional, Dict, List, Any
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 
 class LeetCodeClient:
     BASE_URL = "https://leetcode.com/graphql"
-    HEADERS = {
-        "Content-Type": "application/json",
-        "Referer": "https://leetcode.com",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-    }
+    
+    USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
+    ]
 
     def __init__(self):
-        self.client = httpx.AsyncClient(timeout=10.0)
+        self.clients = []
+        # Main direct connection client
+        self.clients.append(httpx.AsyncClient(timeout=10.0))
+        
+        # Initialize additional clients for configured proxies
+        for proxy in settings.proxies_list:
+            try:
+                client = httpx.AsyncClient(proxies={"all://": proxy}, timeout=10.0)
+                self.clients.append(client)
+                logger.info(f"Initialized proxy client for: {proxy}")
+            except Exception as e:
+                logger.error(f"Error initializing proxy client for {proxy}: {e}")
 
     async def close(self):
-        await self.client.aclose()
+        for client in self.clients:
+            await client.aclose()
 
     async def _query(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         payload = {"query": query, "variables": variables or {}}
+        # Pick random client from the pool
+        client = random.choice(self.clients)
+        
+        # Pick random User-Agent
+        headers = {
+            "Content-Type": "application/json",
+            "Referer": "https://leetcode.com",
+            "User-Agent": random.choice(self.USER_AGENTS)
+        }
+        import time
+        start_time = time.time()
         try:
-            response = await self.client.post(self.BASE_URL, json=payload, headers=self.HEADERS)
+            response = await client.post(self.BASE_URL, json=payload, headers=headers)
+            latency = (time.time() - start_time) * 1000
+            if latency > 1000:
+                logger.warning(f"SLOW LeetCode API Query ({latency:.1f}ms)")
+                try:
+                    from src.utils.logging_helper import send_log
+                    import asyncio
+                    asyncio.create_task(send_log(
+                        f"⚠️ <b>Slow LeetCode API Query</b> ({latency:.1f}ms)\n"
+                        f"Query: <code>{query[:150]}...</code>",
+                        disable_notification=True
+                    ))
+                except Exception:
+                    pass
+
             if response.status_code == 200:
                 data = response.json()
                 if "errors" in data:
