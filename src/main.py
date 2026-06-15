@@ -76,48 +76,103 @@ scheduler = AsyncIOScheduler(
 )
 
 
-async def poll_active_battles():
-    """
-    Background scheduler job to poll active battles every minute.
-    """
-    logger.info("Polling active battles...")
-    try:
-        active_battles = await db.get_active_battles()
-        for battle in active_battles:
-            now = datetime.datetime.now(datetime.timezone.utc)
-            expires_at = battle["expires_at"]
+def stable_hash(s: str) -> int:
+    import hashlib
+    return int(hashlib.md5(s.encode('utf-8')).hexdigest(), 16)
 
+
+class UnifiedPollingCache:
+    def __init__(self):
+        self.submissions = {}
+        self.lock = asyncio.Lock()
+
+    async def get_submissions(self, username: str) -> List[Dict[str, Any]]:
+        async with self.lock:
+            if username in self.submissions:
+                return self.submissions[username]
+            try:
+                await asyncio.sleep(0.1)
+                subs = await leetcode_client.get_recent_accepted_submissions(username, limit=5)
+                self.submissions[username] = subs
+                return subs
+            except Exception as e:
+                logger.error(f"Error fetching submissions for {username}: {e}")
+                self.submissions[username] = []
+                return []
+
+
+async def poll_all_active_battles():
+    """
+    Combined background job to poll both active 1v1 and group battles.
+    Runs every 30 seconds.
+    """
+    logger.info("Running unified active battles polling cycle...")
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        current_tick = int(now.timestamp() / 30)
+
+        active_1v1 = await db.get_active_battles()
+        active_group = await db.get_active_group_battles()
+
+        due_1v1_battles = []
+        due_group_battles = []
+        telegram_ids_to_resolve = set()
+
+        group_participants_map = {}
+
+        # 1. Process 1v1 battles timeouts and categorize active ones
+        for battle in active_1v1:
+            expires_at = battle["expires_at"]
             if isinstance(expires_at, str):
-                expires_at = datetime.datetime.fromisoformat(
-                    expires_at.replace("Z", "+00:00")
-                )
+                expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             elif expires_at and expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
 
-            # Handle expiry
+            # Handle expiry immediately
             if now > expires_at:
                 await db.update_battle_status(battle["id"], "EXPIRED")
-                # Log battle expiry to log channel
-                from src.utils.logging_helper import send_log
+                chat_id = battle.get("chat_id")
+                group_info = ""
+                if chat_id:
+                    if chat_id < 0:
+                        try:
+                            chat = await bot.get_chat(chat_id)
+                            group_title = chat.title or "Group"
+                            group_username = chat.username
+                        except Exception as chat_err:
+                            logger.error(f"Error fetching chat info for group {chat_id}: {chat_err}")
+                            group_title = "Group"
+                            group_username = None
+                            
+                        msg_id = battle.get("message_id")
+                        link = ""
+                        if msg_id:
+                            if group_username:
+                                link = f"https://t.me/{group_username}/{msg_id}"
+                            elif str(chat_id).startswith("-100"):
+                                link = f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}"
+                                
+                        if link:
+                            group_info = f"\n• {html.bold('Group:')} <a href='{link}'>{group_title}</a>"
+                        elif group_username:
+                            group_info = f"\n• {html.bold('Group:')} {group_title} (@{group_username})"
+                        else:
+                            group_info = f"\n• {html.bold('Group:')} {group_title} ({chat_id})"
+                    else:
+                        group_info = f"\n• {html.bold('Group:')} Private DM"
+
                 log_text = (
                     f"⏱️ {html.bold('LeetCode Battle Expired')} ⏱️\n\n"
                     f"• {html.bold('Battle ID:')} {html.code(str(battle['id']))}\n"
                     f"• {html.bold('Problem:')} {battle['problem_title']}\n"
                     f"• {html.bold('Players:')} <a href='tg://user?id={battle['challenger_id']}'>Challenger</a> and <a href='tg://user?id={battle['opponent_id']}'>Opponent</a>"
+                    f"{group_info}"
                 )
                 await send_log(log_text, disable_notification=True)
                 expired_msg = f"⏱️ Battle for {html.bold(battle['problem_title'])} has expired because time limit was reached."
                 try:
-                    await bot.send_message(
-                        chat_id=battle["challenger_id"],
-                        text=expired_msg,
-                        parse_mode="HTML",
-                    )
-                    await bot.send_message(
-                        chat_id=battle["opponent_id"],
-                        text=expired_msg,
-                        parse_mode="HTML",
-                    )
+                    await bot.send_message(chat_id=battle["challenger_id"], text=expired_msg, parse_mode="HTML")
+                    await bot.send_message(chat_id=battle["opponent_id"], text=expired_msg, parse_mode="HTML")
                 except Exception as e:
                     logger.error(f"Error sending battle expiration notification: {e}")
                 continue
@@ -125,49 +180,138 @@ async def poll_active_battles():
             if battle["status"] != "ACTIVE":
                 continue
 
-            started_at = battle["started_at"]
-            if isinstance(started_at, str):
-                started_at = datetime.datetime.fromisoformat(
-                    started_at.replace("Z", "+00:00")
-                )
-            elif started_at and started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=datetime.timezone.utc)
+            remaining_seconds = (expires_at - now).total_seconds()
+            is_due = False
+            b_hash = stable_hash(str(battle["id"]))
 
-            # Fetch account details
-            challenger_link = await db.get_linked_account(battle["challenger_id"])
-            opponent_link = await db.get_linked_account(battle["opponent_id"])
+            if remaining_seconds > 600:
+                is_due = (current_tick + b_hash) % 20 == 0
+            elif 300 < remaining_seconds <= 600:
+                is_due = (current_tick + b_hash) % 4 == 0
+            elif 120 < remaining_seconds <= 300:
+                is_due = (current_tick + b_hash) % 2 == 0
+            else:
+                is_due = True
 
-            if not challenger_link or not opponent_link:
+            if is_due:
+                due_1v1_battles.append(battle)
+                telegram_ids_to_resolve.add(battle["challenger_id"])
+                telegram_ids_to_resolve.add(battle["opponent_id"])
+
+        # 2. Process Group battles timeouts and categorize active ones
+        for battle in active_group:
+            battle_id = str(battle["id"])
+            group_id = battle["group_id"]
+
+            expires_at = battle["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            elif expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+
+            # Handle PENDING battles expiration (5 minutes timeout if never started)
+            if battle["status"] == "PENDING":
+                created_at = battle["created_at"]
+                if isinstance(created_at, str):
+                    created_at = datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                elif created_at and created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=datetime.timezone.utc)
+                
+                if now > (created_at + datetime.timedelta(minutes=5)):
+                    await db.update_group_battle_status(battle_id, "CANCELLED")
+                    try:
+                        await bot.send_message(
+                            chat_id=group_id,
+                            text=f"⏳ The Group Battle challenge for {html.bold(battle['problem_title'])} has been cancelled because it was not started within 5 minutes.",
+                            parse_mode="HTML"
+                        )
+                    except Exception as msg_err:
+                        logger.error(f"Error sending group battle cancellation: {msg_err}")
                 continue
 
-            c_user = challenger_link["leetcode_username"]
-            o_user = opponent_link["leetcode_username"]
+            # Check expiration for ACTIVE battles
+            if now > expires_at and battle["status"] == "ACTIVE":
+                await db.update_group_battle_status(battle_id, "COMPLETED")
+                participants = await db.get_group_battle_participants(battle_id)
+                await end_group_battle(battle, participants, expired=True)
+                continue
 
-            # Fetch recent accepted submissions
-            c_subs = await leetcode_client.get_recent_accepted_submissions(
-                c_user, limit=5
+            if battle["status"] != "ACTIVE":
+                continue
+
+            remaining_seconds = (expires_at - now).total_seconds()
+            is_due = False
+            b_hash = stable_hash(battle_id)
+
+            if remaining_seconds > 600:
+                is_due = (current_tick + b_hash) % 20 == 0
+            elif 300 < remaining_seconds <= 600:
+                is_due = (current_tick + b_hash) % 4 == 0
+            elif 120 < remaining_seconds <= 300:
+                is_due = (current_tick + b_hash) % 2 == 0
+            else:
+                is_due = True
+
+            if is_due:
+                participants = await db.get_group_battle_participants(battle_id)
+                if not participants:
+                    continue
+                group_participants_map[battle_id] = participants
+                due_group_battles.append(battle)
+                for p in participants:
+                    if p["solved_at"] is None:
+                        telegram_ids_to_resolve.add(p["telegram_id"])
+
+        if not due_1v1_battles and not due_group_battles:
+            return
+
+        # 3. Batch resolve LeetCode usernames
+        user_to_leetcode = await db.get_verified_links_for_users(list(telegram_ids_to_resolve))
+
+        # 4. Fetch submissions with shared cache to deduplicate
+        shared_cache = UnifiedPollingCache()
+
+        async def check_1v1_battle_jittered(battle):
+            battle_id = str(battle["id"])
+            jitter_delay = stable_hash(battle_id) % 20
+            await asyncio.sleep(jitter_delay)
+
+            fresh_battle = await db.get_battle(battle_id)
+            if not fresh_battle or fresh_battle["status"] != "ACTIVE":
+                return
+
+            c_id = fresh_battle["challenger_id"]
+            o_id = fresh_battle["opponent_id"]
+            c_user = user_to_leetcode.get(c_id)
+            o_user = user_to_leetcode.get(o_id)
+
+            if not c_user or not o_user:
+                return
+
+            c_subs, o_subs = await asyncio.gather(
+                shared_cache.get_submissions(c_user),
+                shared_cache.get_submissions(o_user)
             )
-            o_subs = await leetcode_client.get_recent_accepted_submissions(
-                o_user, limit=5
-            )
+
+            started_at = fresh_battle["started_at"]
+            if isinstance(started_at, str):
+                started_at = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            elif started_at and started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=datetime.timezone.utc)
 
             c_solved_ts = None
             o_solved_ts = None
 
             for sub in c_subs:
-                if sub["titleSlug"] == battle["problem_slug"]:
-                    sub_time = datetime.datetime.fromtimestamp(
-                        int(sub["timestamp"]), tz=datetime.timezone.utc
-                    )
+                if sub["titleSlug"] == fresh_battle["problem_slug"]:
+                    sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
                     if sub_time > started_at:
                         c_solved_ts = sub_time
                         break
 
             for sub in o_subs:
-                if sub["titleSlug"] == battle["problem_slug"]:
-                    sub_time = datetime.datetime.fromtimestamp(
-                        int(sub["timestamp"]), tz=datetime.timezone.utc
-                    )
+                if sub["titleSlug"] == fresh_battle["problem_slug"]:
+                    sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
                     if sub_time > started_at:
                         o_solved_ts = sub_time
                         break
@@ -176,88 +320,164 @@ async def poll_active_battles():
             loser_id = None
 
             if c_solved_ts and o_solved_ts:
-                # Both solved, check who solved first
                 if c_solved_ts < o_solved_ts:
-                    winner_id = battle["challenger_id"]
-                    loser_id = battle["opponent_id"]
+                    winner_id = c_id
+                    loser_id = o_id
                 else:
-                    winner_id = battle["opponent_id"]
-                    loser_id = battle["challenger_id"]
+                    winner_id = o_id
+                    loser_id = c_id
             elif c_solved_ts:
-                winner_id = battle["challenger_id"]
-                loser_id = battle["opponent_id"]
+                winner_id = c_id
+                loser_id = o_id
             elif o_solved_ts:
-                winner_id = battle["opponent_id"]
-                loser_id = battle["challenger_id"]
+                winner_id = o_id
+                loser_id = c_id
 
             if winner_id:
-                await db.update_battle_status(
-                    battle["id"], "COMPLETED", winner_id=winner_id, ended_at=now
-                )
-                # Award points
+                now_ended = datetime.datetime.now(datetime.timezone.utc)
+                await db.update_battle_status(battle_id, "COMPLETED", winner_id=winner_id, ended_at=now_ended)
                 await db.add_xp_coins(winner_id, xp=100, coins=20)
                 await db.add_xp_coins(loser_id, xp=20, coins=0)
 
-                # Get usernames
-                winner_row = await db.fetchrow(
-                    "SELECT username, first_name FROM users WHERE telegram_id = $1",
-                    winner_id,
-                )
-                loser_row = await db.fetchrow(
-                    "SELECT username, first_name FROM users WHERE telegram_id = $1",
-                    loser_id,
-                )
-
+                winner_row = await db.fetchrow("SELECT username, first_name FROM users WHERE telegram_id = $1", winner_id)
+                loser_row = await db.fetchrow("SELECT username, first_name FROM users WHERE telegram_id = $1", loser_id)
                 w_name = winner_row["first_name"] or winner_row["username"] or "Winner"
                 l_name = loser_row["first_name"] or loser_row["username"] or "Loser"
 
-                # Log battle completion to log channel
                 from src.utils.logging_helper import send_log
+                chat_id = fresh_battle.get("chat_id")
+                group_info = ""
+                if chat_id:
+                    if chat_id < 0:
+                        try:
+                            chat = await bot.get_chat(chat_id)
+                            group_title = chat.title or "Group"
+                            group_username = chat.username
+                        except Exception as chat_err:
+                            logger.error(f"Error fetching chat info for group {chat_id}: {chat_err}")
+                            group_title = "Group"
+                            group_username = None
+                            
+                        msg_id = fresh_battle.get("message_id")
+                        link = ""
+                        if msg_id:
+                            if group_username:
+                                link = f"https://t.me/{group_username}/{msg_id}"
+                            elif str(chat_id).startswith("-100"):
+                                link = f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}"
+                                
+                        if link:
+                            group_info = f"\n• {html.bold('Group:')} <a href='{link}'>{group_title}</a>"
+                        elif group_username:
+                            group_info = f"\n• {html.bold('Group:')} {group_title} (@{group_username})"
+                        else:
+                            group_info = f"\n• {html.bold('Group:')} {group_title} ({chat_id})"
+                    else:
+                        group_info = f"\n• {html.bold('Group:')} Private DM"
+
                 log_text = (
                     f"🏆 {html.bold('LeetCode Battle Won')} 🏆\n\n"
-                    f"• {html.bold('Battle ID:')} {html.code(str(battle['id']))}\n"
-                    f"• {html.bold('Problem:')} {battle['problem_title']}\n"
+                    f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
+                    f"• {html.bold('Problem:')} {fresh_battle['problem_title']}\n"
                     f"• {html.bold('Winner:')} {w_name} ({winner_id})\n"
                     f"• {html.bold('Loser:')} {l_name} ({loser_id})"
+                    f"{group_info}"
                 )
                 await send_log(log_text, disable_notification=True)
 
-                winner_url = f"https://leetcode.com/problems/{battle['problem_slug']}"
+                winner_url = f"https://leetcode.com/problems/{fresh_battle['problem_slug']}"
                 result_msg = (
                     f"🎉 {html.bold('LeetCode Battle Completed!')} 🎉\n\n"
-                    f"🏆 Problem: <a href='{winner_url}'>{battle['problem_title']}</a>\n"
+                    f"🏆 Problem: <a href='{winner_url}'>{fresh_battle['problem_title']}</a>\n"
                     f"🥇 Winner: {html.bold(w_name)} (Awarded 100 XP, 20 coins)\n"
                     f"🥈 Loser: {html.bold(l_name)} (Awarded 20 XP)\n\n"
                     f"Congratulations to both players for competing!"
                 )
 
                 try:
-                    await bot.send_message(
-                        chat_id=battle["challenger_id"],
-                        text=result_msg,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
-                    await bot.send_message(
-                        chat_id=battle["opponent_id"],
-                        text=result_msg,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
+                    await bot.send_message(chat_id=c_id, text=result_msg, parse_mode="HTML", disable_web_page_preview=True)
+                    await bot.send_message(chat_id=o_id, text=result_msg, parse_mode="HTML", disable_web_page_preview=True)
                 except Exception as e:
                     logger.error(f"Error sending battle completed message: {e}")
+
+        async def check_group_battle_jittered(battle):
+            battle_id = str(battle["id"])
+            group_id = battle["group_id"]
+            jitter_delay = stable_hash(battle_id) % 20
+            await asyncio.sleep(jitter_delay)
+
+            fresh_battle = await db.get_group_battle(battle_id)
+            if not fresh_battle or fresh_battle["status"] != "ACTIVE":
+                return
+
+            starts_at = fresh_battle["starts_at"]
+            if isinstance(starts_at, str):
+                starts_at = datetime.datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+            elif starts_at and starts_at.tzinfo is None:
+                starts_at = starts_at.replace(tzinfo=datetime.timezone.utc)
+
+            participants = group_participants_map.get(battle_id)
+            if not participants:
+                return
+
+            solves_updated = False
+            for p in participants:
+                if p["solved_at"] is not None:
+                    continue
+
+                leetcode_user = user_to_leetcode.get(p["telegram_id"])
+                if not leetcode_user:
+                    continue
+
+                subs = await shared_cache.get_submissions(leetcode_user)
+                for sub in subs:
+                    if sub["titleSlug"] == fresh_battle["problem_slug"]:
+                        sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
+                        if sub_time > starts_at:
+                            solve_time = int((sub_time - starts_at).total_seconds())
+                            await db.update_group_participant_solve(battle_id, p["telegram_id"], sub_time, solve_time)
+                            p["solved_at"] = sub_time
+                            p["solve_time_seconds"] = solve_time
+                            solves_updated = True
+
+                            solved_msg = (
+                                f"🎉 {html.bold('LeetCode Group Battle Solve!')} 🏆\n\n"
+                                f"• Player: <a href='tg://user?id={p['telegram_id']}'>{p['first_name'] or p['username']}</a>\n"
+                                f"• Problem: {fresh_battle['problem_title']}\n"
+                                f"• Time Taken: {solve_time // 60}m {solve_time % 60}s\n\n"
+                                f"Great job! Keep it up! 💪"
+                            )
+                            try:
+                                await bot.send_message(chat_id=group_id, text=solved_msg, parse_mode="HTML")
+                            except Exception as e:
+                                logger.error(f"Error sending group solve notification: {e}")
+                            break
+
+            participants_fresh = await db.get_group_battle_participants(battle_id)
+            all_solved = all(p["solved_at"] is not None for p in participants_fresh)
+            if all_solved and solves_updated:
+                await db.update_group_battle_status(battle_id, "COMPLETED")
+                await end_group_battle(fresh_battle, participants_fresh, expired=False)
+
+        tasks = []
+        for battle in due_1v1_battles:
+            tasks.append(check_1v1_battle_jittered(battle))
+        for battle in due_group_battles:
+            tasks.append(check_group_battle_jittered(battle))
+
+        await asyncio.gather(*tasks)
+
     except Exception as e:
-        logger.error(f"Error in poll_active_battles: {e}", exc_info=True)
+        logger.error(f"Error in poll_all_active_battles: {e}", exc_info=True)
         tb = traceback.format_exc()
         if len(tb) > 2500:
             tb = tb[:2500] + "\n...[truncated]"
         error_msg = (
-            f"🚨 {html.bold('CRITICAL: Error in Background Task (poll_active_battles)')} 🚨\n\n"
+            f"🚨 {html.bold('CRITICAL: Error in Background Task (poll_all_active_battles)')} 🚨\n\n"
             f"⚠️ {html.bold('Error:')} {html.code(str(e))}\n\n"
             f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
         )
         from src.utils.logging_helper import send_log
-
         await send_log(error_msg, pin=True, disable_notification=False)
 
 
@@ -319,135 +539,50 @@ async def end_group_battle(battle, participants, expired: bool):
     except Exception as e:
         logger.error(f"Error sending final group battle leaderboard: {e}")
         
-    # Log battle completed to log channel
-    from src.utils.logging_helper import send_log
-    log_text = (
-        f"🏆 {html.bold('Group LeetCode Battle Completed')} 🏆\n\n"
-        f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
-        f"• {html.bold('Group ID:')} {html.code(str(group_id))}\n"
-        f"• {html.bold('Problem:')} {battle['problem_title']}\n"
-        f"• {html.bold('Total Players:')} {len(participants)}\n"
-        f"• {html.bold('Winner:')} {final_ranking[0]['first_name'] or final_ranking[0]['username'] if final_ranking else 'None'}"
-    )
-    await send_log(log_text, disable_notification=True)
-
-
-async def poll_active_group_battles():
-    """
-    Background scheduler job to poll active open group battles every minute.
-    """
-    logger.info("Polling active group battles...")
+    # Log battle completed/expired to log channel
     try:
-        active_battles = await db.get_active_group_battles()
-        for battle in active_battles:
-            battle_id = str(battle["id"])
-            group_id = battle["group_id"]
-            now = datetime.datetime.now(datetime.timezone.utc)
+        title = 'Group LeetCode Battle Expired' if expired else 'Group LeetCode Battle Completed'
+        emoji = '⏱️' if expired else '🏆'
+        
+        group_title = "Group"
+        group_username = None
+        try:
+            chat = await bot.get_chat(group_id)
+            group_title = chat.title or "Group"
+            group_username = chat.username
+        except Exception as chat_err:
+            logger.error(f"Error fetching chat info for group {group_id}: {chat_err}")
             
-            expires_at = battle["expires_at"]
-            if isinstance(expires_at, str):
-                expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-            elif expires_at and expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
-
-            starts_at = battle["starts_at"]
-            if starts_at:
-                if isinstance(starts_at, str):
-                    starts_at = datetime.datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
-                elif starts_at.tzinfo is None:
-                    starts_at = starts_at.replace(tzinfo=datetime.timezone.utc)
-
-            participants = await db.get_group_battle_participants(battle_id)
-            if not participants:
-                continue
-
-            # Handle PENDING battles expiration (5 minutes timeout if never started)
-            if battle["status"] == "PENDING":
-                created_at = battle["created_at"]
-                if isinstance(created_at, str):
-                    created_at = datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                elif created_at and created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=datetime.timezone.utc)
+        msg_id = battle.get("message_id")
+        link = ""
+        if msg_id:
+            if group_username:
+                link = f"https://t.me/{group_username}/{msg_id}"
+            elif str(group_id).startswith("-100"):
+                link = f"https://t.me/c/{str(group_id)[4:]}/{msg_id}"
                 
-                # Check 5 minutes timeout
-                if now > (created_at + datetime.timedelta(minutes=5)):
-                    await db.update_group_battle_status(battle_id, "CANCELLED")
-                    try:
-                        await bot.send_message(
-                            chat_id=group_id,
-                            text=f"⏳ The Group Battle challenge for {html.bold(battle['problem_title'])} has been cancelled because it was not started within 5 minutes.",
-                            parse_mode="HTML"
-                        )
-                    except Exception as msg_err:
-                        logger.error(f"Error sending group battle cancellation: {msg_err}")
-                continue
-
-            # Check expiration for ACTIVE battles
-            if now > expires_at and battle["status"] == "ACTIVE":
-                await db.update_group_battle_status(battle_id, "COMPLETED")
-                await end_group_battle(battle, participants, expired=True)
-                continue
-
-            if battle["status"] != "ACTIVE":
-                continue
-
-            solves_updated = False
-            for p in participants:
-                if p["solved_at"] is not None:
-                    continue
-                
-                link = await db.get_linked_account(p["telegram_id"])
-                if not link or not link["verified"]:
-                    continue
-                
-                leetcode_user = link["leetcode_username"]
-                try:
-                    subs = await leetcode_client.get_recent_accepted_submissions(leetcode_user, limit=5)
-                    for sub in subs:
-                        if sub["titleSlug"] == battle["problem_slug"]:
-                            sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
-                            if sub_time > starts_at:
-                                solve_time = int((sub_time - starts_at).total_seconds())
-                                await db.update_group_participant_solve(battle_id, p["telegram_id"], sub_time, solve_time)
-                                p["solved_at"] = sub_time
-                                p["solve_time_seconds"] = solve_time
-                                solves_updated = True
-                                
-                                solved_msg = (
-                                    f"🎉 {html.bold('LeetCode Group Battle Solve!')} 🏆\n\n"
-                                    f"• Player: <a href='tg://user?id={p['telegram_id']}'>{p['first_name'] or p['username']}</a>\n"
-                                    f"• Problem: {battle['problem_title']}\n"
-                                    f"• Time Taken: {solve_time // 60}m {solve_time % 60}s\n\n"
-                                    f"Great job! Keep it up! 💪"
-                                )
-                                try:
-                                    await bot.send_message(chat_id=group_id, text=solved_msg, parse_mode="HTML")
-                                except Exception as e:
-                                    logger.error(f"Error sending solve notification to group {group_id}: {e}")
-                                break
-                except Exception as sub_err:
-                    logger.error(f"Error polling submissions for group battle player {leetcode_user}: {sub_err}")
-
-            # Check if everyone has solved
-            all_solved = all(p["solved_at"] is not None for p in participants)
-            if all_solved and solves_updated:
-                # Refresh list and close battle
-                participants = await db.get_group_battle_participants(battle_id)
-                await db.update_group_battle_status(battle_id, "COMPLETED")
-                await end_group_battle(battle, participants, expired=False)
-                
-    except Exception as e:
-        logger.error(f"Error in poll_active_group_battles: {e}", exc_info=True)
-        tb = traceback.format_exc()
-        if len(tb) > 2500:
-            tb = tb[:2500] + "\n...[truncated]"
-        error_msg = (
-            f"🚨 {html.bold('CRITICAL: Error in Background Task (poll_active_group_battles)')} 🚨\n\n"
-            f"⚠️ {html.bold('Error:')} {html.code(str(e))}\n\n"
-            f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>"
-        )
+        if link:
+            group_info = f"<a href='{link}'>{group_title}</a>"
+        elif group_username:
+            group_info = f"{group_title} (@{group_username})"
+        else:
+            group_info = f"{group_title} ({group_id})"
+            
         from src.utils.logging_helper import send_log
-        await send_log(error_msg, pin=True, disable_notification=False)
+        log_text = (
+            f"{emoji} {html.bold(title)} {emoji}\n\n"
+            f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
+            f"• {html.bold('Group:')} {group_info}\n"
+            f"• {html.bold('Problem:')} {battle['problem_title']}\n"
+            f"• {html.bold('Total Players:')} {len(participants)}\n"
+            f"• {html.bold('Winner:')} {final_ranking[0]['first_name'] or final_ranking[0]['username'] if final_ranking and final_ranking[0]['solved_at'] is not None else 'None'}"
+        )
+        await send_log(log_text, disable_notification=True)
+    except Exception as log_err:
+        logger.error(f"Error logging group battle end/expiration: {log_err}")
+
+
+
 
 
 async def check_srs_reviews():
@@ -1032,22 +1167,13 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(dp.start_polling(bot))
 
     # Setup scheduler jobs
-    # Poll battles every minute
+    # Poll all active battles (1v1 and group) every 30 seconds
     scheduler.add_job(
-        poll_active_battles,
+        poll_all_active_battles,
         "interval",
-        seconds=settings.BATTLE_POLL_INTERVAL,
+        seconds=30,
         misfire_grace_time=60,
-        id="poll_battles",
-        replace_existing=True,
-    )
-    # Poll group battles every minute
-    scheduler.add_job(
-        poll_active_group_battles,
-        "interval",
-        seconds=settings.BATTLE_POLL_INTERVAL,
-        misfire_grace_time=60,
-        id="poll_group_battles",
+        id="poll_all_active_battles",
         replace_existing=True,
     )
     # Check SRS reviews once a day (at 9 AM)
@@ -1140,19 +1266,8 @@ async def log_request_latency(request: Request, call_next):
     start_time = time.time()
     response = await call_next(request)
     latency = (time.time() - start_time) * 1000
-    if latency > 500:
+    if latency > 5000:
         logger.warning(f"SLOW HTTP Request ({latency:.1f}ms): {request.method} {request.url.path}")
-        try:
-            from src.utils.logging_helper import send_log
-            from html import escape as html_escape
-            import asyncio
-            asyncio.create_task(send_log(
-                f"⚠️ <b>Slow HTTP Request</b> ({latency:.1f}ms)\n"
-                f"Path: <code>{html_escape(request.method)} {html_escape(request.url.path)}</code>",
-                disable_notification=True
-            ))
-        except Exception:
-            pass
     return response
 
 

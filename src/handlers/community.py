@@ -14,6 +14,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 leetcode_client = LeetCodeClient()
+VERIFY_COOLDOWNS = {}
 
 @router.message(Command("leaderboard"))
 async def cmd_leaderboard(message: Message):
@@ -173,6 +174,17 @@ async def check_invitation_timeout(bot, battle_id):
                 text=f"⏳ The LeetCode Battle Challenge from {html.bold(c_name)} to {html.bold(o_name)} has expired after 5 minutes of inactivity.",
                 parse_mode="HTML"
             )
+            
+            # If it was a private DM challenge (chat_id == opponent_id), notify the challenger in DM too
+            if chat_id == battle["opponent_id"]:
+                try:
+                    await bot.send_message(
+                        chat_id=battle["challenger_id"],
+                        text=f"⏳ Your LeetCode Battle Challenge to {html.bold(o_name)} has expired after 5 minutes of inactivity.",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Failed to send expiration message to {chat_id}: {e}")
 
@@ -202,6 +214,17 @@ async def cancel_other_pending_challenges(bot, player_id, active_battle_id):
                     text=f"⚠️ LeetCode Battle Challenge between {html.bold(c_name)} and {html.bold(o_name)} was cancelled because one of the players started another battle.",
                     parse_mode="HTML"
                 )
+                
+                # If it was a private DM challenge (chat_id == opponent_id), notify the challenger too
+                if chat_id == r["opponent_id"]:
+                    try:
+                        await bot.send_message(
+                            chat_id=r["challenger_id"],
+                            text=f"⚠️ Your LeetCode Battle Challenge to {html.bold(o_name)} was cancelled because one of you started another battle.",
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"Failed to send cancellation notice to {chat_id}: {e}")
 
@@ -209,12 +232,21 @@ async def cancel_other_pending_challenges(bot, player_id, active_battle_id):
 async def get_battle_from_message_or_args(message, command):
     if message.reply_to_message:
         replied_msg = message.reply_to_message
+        # 1. Check 1v1 battles
         battle = await db.fetchrow(
             "SELECT * FROM battles WHERE chat_id = $1 AND message_id = $2",
             message.chat.id, replied_msg.message_id
         )
         if battle:
             return dict(battle)
+        # 2. Check group battles
+        gbattle = await db.fetchrow(
+            "SELECT * FROM group_battles WHERE group_id = $1 AND message_id = $2",
+            message.chat.id, replied_msg.message_id
+        )
+        if gbattle:
+            return dict(gbattle)
+            
         text = replied_msg.text or replied_msg.caption or ""
         import re
         uuid_pattern = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -225,6 +257,9 @@ async def get_battle_from_message_or_args(message, command):
                 battle = await db.get_battle(battle_uuid)
                 if battle:
                     return battle
+                gbattle = await db.get_group_battle(battle_uuid)
+                if gbattle:
+                    return gbattle
             except Exception:
                 pass
     if command.args:
@@ -233,6 +268,9 @@ async def get_battle_from_message_or_args(message, command):
             battle = await db.get_battle(battle_uuid)
             if battle:
                 return battle
+            gbattle = await db.get_group_battle(battle_uuid)
+            if gbattle:
+                return gbattle
         except Exception:
             pass
     return None
@@ -432,7 +470,7 @@ async def cmd_battle(message: Message, command: CommandObject):
     problem_slug = selected_prob["titleSlug"]
     problem_title = selected_prob["title"]
     expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
-    battle = await db.create_battle(user_id, opponent_id, problem_slug, problem_title, expires_at)
+    battle = await db.create_battle(user_id, opponent_id, problem_slug, problem_title, difficulty_str, expires_at)
     battle_id = battle["id"]
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -454,21 +492,70 @@ async def cmd_battle(message: Message, command: CommandObject):
         f"⏳ Time Limit: {html.bold('60 minutes')} once started\n\n"
         f"{opp_tag}, do you accept this challenge?"
     )
-    sent_msg = await message.bot.send_message(
-        chat_id=message.chat.id,
-        text=challenge_msg,
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
-    await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
-    try:
-        group_title = f" '{message.chat.title}'" if message.chat.title else ""
-        await message.bot.send_message(
-            chat_id=opponent_id,
-            text=f"⚔️ You have been challenged to a LeetCode Battle by @{message.from_user.username or message.from_user.first_name} in group{group_title}! Check the group to accept or decline."
+    is_private = message.chat.type == "private"
+    
+    if is_private:
+        # Check if the opponent has started the bot by trying to message them
+        try:
+            sent_msg = await message.bot.send_message(
+                chat_id=opponent_id,
+                text=challenge_msg,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            # Store opponent's chat_id and message_id
+            await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
+            
+            # Send confirmation to challenger
+            await message.reply(
+                f"⚔️ {html.bold('LeetCode Battle Challenge Sent!')} ⚔️\n\n"
+                f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                f"We have sent the challenge directly to <a href='tg://user?id={opponent_id}'>{opp_display}</a>'s DMs. "
+                f"Waiting for them to accept or decline.",
+                parse_mode="HTML"
+            )
+            
+            # Log private DM challenge sent to log channel
+            try:
+                from src.utils.logging_helper import send_log
+                log_text = (
+                    f"📩 {html.bold('LeetCode Battle Challenge Sent (DM)')} 📩\n\n"
+                    f"• {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                    f"• {html.bold('Challenger:')} <a href='tg://user?id={user_id}'>{message.from_user.first_name or message.from_user.username}</a> ({user_id})\n"
+                    f"• {html.bold('Opponent:')} <a href='tg://user?id={opponent_id}'>{opp_display}</a> ({opponent_id})\n"
+                    f"• {html.bold('Problem Category:')} {invitation_info}"
+                )
+                await send_log(log_text, disable_notification=True)
+            except Exception as log_err:
+                logger.error(f"Error logging DM challenge sent to log channel: {log_err}")
+                
+        except Exception as dm_err:
+            logger.error(f"Failed to send DM challenge to opponent {opponent_id}: {dm_err}")
+            await db.update_battle_status(str(battle_id), "CANCELLED")
+            await message.reply(
+                f"❌ Cannot challenge {html.bold(opp_display)} in DM because the bot cannot message them. "
+                f"Please ask them to start the bot first by clicking @MemoizeLC_bot and pressing Start.",
+                parse_mode="HTML"
+            )
+            return
+    else:
+        # Group challenge logic
+        sent_msg = await message.bot.send_message(
+            chat_id=message.chat.id,
+            text=challenge_msg,
+            reply_markup=keyboard,
+            parse_mode="HTML"
         )
-    except Exception:
-        pass
+        await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
+        try:
+            group_title = f" '{message.chat.title}'" if message.chat.title else ""
+            await message.bot.send_message(
+                chat_id=opponent_id,
+                text=f"⚔️ You have been challenged to a LeetCode Battle by @{message.from_user.username or message.from_user.first_name} in group{group_title}! Check the group to accept or decline."
+            )
+        except Exception:
+            pass
+            
     asyncio.create_task(check_invitation_timeout(message.bot, str(battle_id)))
 
 
@@ -493,12 +580,38 @@ async def process_battle_accept(callback_query: CallbackQuery):
     asyncio.create_task(cancel_other_pending_challenges(callback_query.bot, battle["challenger_id"], battle_id))
     asyncio.create_task(cancel_other_pending_challenges(callback_query.bot, clicker_id, battle_id))
     from src.utils.logging_helper import send_log
+    group_info = ""
+    chat_id = battle.get("chat_id")
+    if chat_id:
+        if chat_id < 0:
+            chat = callback_query.message.chat
+            group_title = chat.title or "Group"
+            group_username = chat.username
+            msg_id = battle.get("message_id") or callback_query.message.message_id
+            
+            link = ""
+            if msg_id:
+                if group_username:
+                    link = f"https://t.me/{group_username}/{msg_id}"
+                elif str(chat.id).startswith("-100"):
+                    link = f"https://t.me/c/{str(chat.id)[4:]}/{msg_id}"
+                    
+            if link:
+                group_info = f"\n• {html.bold('Group:')} <a href='{link}'>{group_title}</a>"
+            elif group_username:
+                group_info = f"\n• {html.bold('Group:')} {group_title} (@{group_username})"
+            else:
+                group_info = f"\n• {html.bold('Group:')} {group_title} ({chat.id})"
+        else:
+            group_info = f"\n• {html.bold('Group:')} Private DM"
+
     log_text = (
         f"⚔️ {html.bold('LeetCode Battle Started')} ⚔️\n\n"
         f"• {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
         f"• {html.bold('Challenger:')} <a href='tg://user?id={battle['challenger_id']}'>Link</a> ({battle['challenger_id']})\n"
         f"• {html.bold('Opponent:')} @{callback_query.from_user.username or callback_query.from_user.first_name} ({callback_query.from_user.id})\n"
         f"• {html.bold('Problem:')} {battle['problem_title']}"
+        f"{group_info}"
     )
     await send_log(log_text, disable_notification=True)
     battle_url = f"https://leetcode.com/problems/{battle['problem_slug']}"
@@ -511,11 +624,15 @@ async def process_battle_accept(callback_query: CallbackQuery):
         f"The first one to get a green accepted submission wins!\n\n"
         f"We will automatically poll LeetCode for results. Good luck!"
     )
-    await callback_query.message.edit_text(start_msg, parse_mode="HTML", disable_web_page_preview=True)
+    verify_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Verify Solve", callback_data=f"battle_verify:{battle_id}")]
+    ])
+    await callback_query.message.edit_text(start_msg, reply_markup=verify_keyboard, parse_mode="HTML", disable_web_page_preview=True)
     try:
         await callback_query.message.bot.send_message(
             chat_id=battle["challenger_id"],
             text=f"⚔️ Your challenge to @{callback_query.from_user.username or callback_query.from_user.first_name} was accepted!\n\n" + start_msg,
+            reply_markup=verify_keyboard,
             parse_mode="HTML",
             disable_web_page_preview=True
         )
@@ -667,14 +784,78 @@ async def cmd_stopbattle(message: Message, command: CommandObject):
             "SELECT * FROM battles WHERE (challenger_id = $1 OR opponent_id = $1) AND status IN ('ACTIVE', 'PAUSED')",
             user_id
         )
-        if len(rows) > 1:
+        group_rows = await db.fetch(
+            """
+            SELECT DISTINCT gb.*
+            FROM group_battles gb
+            LEFT JOIN group_battle_participants gbp ON gb.id = gbp.group_battle_id
+            WHERE (gbp.telegram_id = $1 OR gb.created_by = $1) AND gb.status IN ('ACTIVE', 'PAUSED')
+            """,
+            user_id
+        )
+        all_battles = [dict(r) for r in rows] + [dict(r) for r in group_rows]
+        if len(all_battles) > 1:
             await message.reply("⚠️ You have multiple active/paused battles. Please specify the battle ID or reply to the battle message:\n`/stopbattle <battle_uuid>`")
             return
-        elif len(rows) == 1:
-            battle = dict(rows[0])
+        elif len(all_battles) == 1:
+            battle = all_battles[0]
         else:
             await message.reply("❌ You do not have any active or paused battles.")
             return
+
+    battle_id = str(battle["id"])
+    is_group = "group_id" in battle
+
+    if is_group:
+        role = await get_user_role(user_id, message.chat.id, message.chat.type, message.bot)
+        has_admin_override = (role >= UserRole.GROUP_ADMIN) or (role >= UserRole.COORDINATOR)
+        is_host = (user_id == battle["created_by"])
+        if not is_host and not has_admin_override:
+            await message.reply("❌ You do not have permission to stop this battle.")
+            return
+        
+        await db.update_group_battle_status(battle_id, "CANCELLED")
+        
+        # Log group battle cancelled to log channel
+        try:
+            from src.utils.logging_helper import send_log
+            chat = message.chat
+            group_title = chat.title or "Group"
+            group_username = chat.username
+            msg_id = battle.get("message_id")
+            
+            link = ""
+            if msg_id:
+                if group_username:
+                    link = f"https://t.me/{group_username}/{msg_id}"
+                elif str(chat.id).startswith("-100"):
+                    link = f"https://t.me/c/{str(chat.id)[4:]}/{msg_id}"
+                    
+            if link:
+                group_info = f"<a href='{link}'>{group_title}</a>"
+            elif group_username:
+                group_info = f"{group_title} (@{group_username})"
+            else:
+                group_info = f"{group_title} ({chat.id})"
+                
+            log_text = (
+                f"⏹️ {html.bold('Group LeetCode Battle Cancelled')} ⏹️\n\n"
+                f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
+                f"• {html.bold('Group:')} {group_info}\n"
+                f"• {html.bold('Problem:')} {battle['problem_title']}\n"
+                f"• {html.bold('Cancelled by:')} @{message.from_user.username or message.from_user.first_name} ({message.from_user.id})"
+            )
+            await send_log(log_text, disable_notification=True)
+        except Exception as log_err:
+            logger.error(f"Error logging group battle cancellation: {log_err}")
+        await message.reply(
+            f"⏹️ {html.bold('Group Battle Cancelled')} ⏹️\n\n"
+            f"🆔 Battle ID: {html.code(battle_id)}\n"
+            f"Problem: {battle['problem_title']}\n\n"
+            f"This group battle has been stopped. No points/XP awarded.",
+            parse_mode="HTML"
+        )
+        return
 
     is_player = (user_id == battle["challenger_id"] or user_id == battle["opponent_id"])
     role = await get_user_role(user_id, message.chat.id, message.chat.type, message.bot)
@@ -683,16 +864,39 @@ async def cmd_stopbattle(message: Message, command: CommandObject):
         await message.reply("❌ You do not have permission to stop this battle.")
         return
 
-    battle_id = str(battle["id"])
     if has_admin_override and not is_player:
         await db.update_battle_status(battle_id, "CANCELLED", ended_at=datetime.datetime.now(datetime.timezone.utc))
-        from src.utils.logging_helper import log_admin_activity
+        group_info = ""
+        chat_id = battle.get("chat_id")
+        if chat_id:
+            if chat_id < 0:
+                chat = message.chat
+                group_title = chat.title or "Group"
+                group_username = chat.username
+                msg_id = battle.get("message_id")
+                link = ""
+                if msg_id:
+                    if group_username:
+                        link = f"https://t.me/{group_username}/{msg_id}"
+                    elif str(chat_id).startswith("-100"):
+                        link = f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}"
+                        
+                if link:
+                    group_info = f"\n• {html.bold('Group:')} <a href='{link}'>{group_title}</a>"
+                elif group_username:
+                    group_info = f"\n• {html.bold('Group:')} {group_title} (@{group_username})"
+                else:
+                    group_info = f"\n• {html.bold('Group:')} {group_title} ({chat_id})"
+            else:
+                group_info = f"\n• {html.bold('Group:')} Private DM"
+
         log_text = (
             f"⏹️ {html.bold('Battle Forcefully Cancelled by Admin')} ⏹️\n\n"
             f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
             f"• {html.bold('Challenger:')} <a href='tg://user?id={battle['challenger_id']}'>Link</a> ({battle['challenger_id']})\n"
             f"• {html.bold('Opponent:')} <a href='tg://user?id={battle['opponent_id']}'>Link</a> ({battle['opponent_id']})\n"
             f"• {html.bold('Cancelled by:')} @{message.from_user.username or message.from_user.first_name} ({message.from_user.id})"
+            f"{group_info}"
         )
         await log_admin_activity(log_text, message)
         await message.reply(
@@ -746,12 +950,42 @@ async def process_draw_accept(callback_query: CallbackQuery):
         return
     await db.update_battle_status(battle_id, "COMPLETED", ended_at=datetime.datetime.now(datetime.timezone.utc))
     from src.utils.logging_helper import send_log
+    group_info = ""
+    chat_id = battle.get("chat_id")
+    if chat_id:
+        if chat_id < 0:
+            try:
+                chat = callback_query.message.chat
+                group_title = chat.title or "Group"
+                group_username = chat.username
+            except Exception:
+                group_title = "Group"
+                group_username = None
+                
+            msg_id = battle.get("message_id")
+            link = ""
+            if msg_id:
+                if group_username:
+                    link = f"https://t.me/{group_username}/{msg_id}"
+                elif str(chat_id).startswith("-100"):
+                    link = f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}"
+                    
+            if link:
+                group_info = f"\n• {html.bold('Group:')} <a href='{link}'>{group_title}</a>"
+            elif group_username:
+                group_info = f"\n• {html.bold('Group:')} {group_title} (@{group_username})"
+            else:
+                group_info = f"\n• {html.bold('Group:')} {group_title} ({chat_id})"
+        else:
+            group_info = f"\n• {html.bold('Group:')} Private DM"
+
     log_text = (
         f"🤝 {html.bold('LeetCode Battle Draw')} 🤝\n\n"
         f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
         f"• {html.bold('Problem:')} {battle['problem_title']}\n"
         f"• {html.bold('Players:')} <a href='tg://user?id={battle['challenger_id']}'>Link</a> and <a href='tg://user?id={battle['opponent_id']}'>Link</a>\n"
         f"Both players agreed to end the battle in a draw."
+        f"{group_info}"
     )
     await send_log(log_text, disable_notification=True)
     await callback_query.message.edit_text(
@@ -822,12 +1056,42 @@ async def process_draw_forfeit(callback_query: CallbackQuery):
     w_name = winner_row["first_name"] or winner_row["username"] or "Opponent"
     l_name = loser_row["first_name"] or loser_row["username"] or "Challenger"
     from src.utils.logging_helper import send_log
+    group_info = ""
+    chat_id = battle.get("chat_id")
+    if chat_id:
+        if chat_id < 0:
+            try:
+                chat = callback_query.message.chat
+                group_title = chat.title or "Group"
+                group_username = chat.username
+            except Exception:
+                group_title = "Group"
+                group_username = None
+                
+            msg_id = battle.get("message_id")
+            link = ""
+            if msg_id:
+                if group_username:
+                    link = f"https://t.me/{group_username}/{msg_id}"
+                elif str(chat_id).startswith("-100"):
+                    link = f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}"
+                    
+            if link:
+                group_info = f"\n• {html.bold('Group:')} <a href='{link}'>{group_title}</a>"
+            elif group_username:
+                group_info = f"\n• {html.bold('Group:')} {group_title} (@{group_username})"
+            else:
+                group_info = f"\n• {html.bold('Group:')} {group_title} ({chat_id})"
+        else:
+            group_info = f"\n• {html.bold('Group:')} Private DM"
+
     log_text = (
         f"🏳️ {html.bold('LeetCode Battle Forfeited')} 🏳️\n\n"
         f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
         f"• {html.bold('Problem:')} {battle['problem_title']}\n"
         f"• {html.bold('Winner:')} {w_name} ({winner_id})\n"
         f"• {html.bold('Loser:')} {l_name} ({loser_id})"
+        f"{group_info}"
     )
     await send_log(log_text, disable_notification=True)
     await callback_query.message.edit_text(
@@ -875,14 +1139,58 @@ async def cmd_pausebattle(message: Message, command: CommandObject):
             "SELECT * FROM battles WHERE (challenger_id = $1 OR opponent_id = $1) AND status = 'ACTIVE'",
             user_id
         )
-        if len(rows) > 1:
+        group_rows = await db.fetch(
+            """
+            SELECT DISTINCT gb.*
+            FROM group_battles gb
+            LEFT JOIN group_battle_participants gbp ON gb.id = gbp.group_battle_id
+            WHERE (gbp.telegram_id = $1 OR gb.created_by = $1) AND gb.status = 'ACTIVE'
+            """,
+            user_id
+        )
+        all_battles = [dict(r) for r in rows] + [dict(r) for r in group_rows]
+        if len(all_battles) > 1:
             await message.reply("⚠️ You have multiple active battles. Please specify the battle ID or reply to the battle message:\n`/pausebattle <battle_uuid>`")
             return
-        elif len(rows) == 1:
-            battle = dict(rows[0])
+        elif len(all_battles) == 1:
+            battle = all_battles[0]
         else:
             await message.reply("❌ You do not have any active battles to pause.")
             return
+
+    battle_id = str(battle["id"])
+    is_group = "group_id" in battle
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expires_at = battle["expires_at"]
+    if isinstance(expires_at, str):
+        expires_at = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    elif expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+    remaining = max(0, int((expires_at - now).total_seconds()))
+
+    if is_group:
+        role = await get_user_role(user_id, message.chat.id, message.chat.type, message.bot)
+        has_admin_override = (role >= UserRole.GROUP_ADMIN) or (role >= UserRole.COORDINATOR)
+        is_host = (user_id == battle["created_by"])
+        if not is_host and not has_admin_override:
+            await message.reply("❌ You do not have permission to pause this battle.")
+            return
+        if battle["status"] != "ACTIVE":
+            await message.reply(f"❌ Battle is not active (Status: {battle['status']}).")
+            return
+
+        await db.execute(
+            "UPDATE group_battles SET status = 'PAUSED', paused_at = $2, remaining_seconds = $3 WHERE id = $1::uuid",
+            battle_id, now, remaining
+        )
+        await message.reply(
+            f"⏸️ {html.bold('Group Battle Paused')} ⏸️\n\n"
+            f"🆔 Battle ID: {html.code(battle_id)}\n"
+            f"Problem: {battle['problem_title']}\n\n"
+            f"The battle timer has been frozen at {remaining // 60}m {remaining % 60}s by the host or an administrator.",
+            parse_mode="HTML"
+        )
+        return
 
     is_player = (user_id == battle["challenger_id"] or user_id == battle["opponent_id"])
     role = await get_user_role(user_id, message.chat.id, message.chat.type, message.bot)
@@ -1042,12 +1350,42 @@ async def check_resume_timeout(bot, battle_id: str, initiator_id: int, opponent_
     l_name = l_row["first_name"] or l_row["username"] or "Opponent"
 
     from src.utils.logging_helper import send_log
+    group_info = ""
+    chat_id = battle.get("chat_id")
+    if chat_id:
+        if chat_id < 0:
+            try:
+                chat = await bot.get_chat(chat_id)
+                group_title = chat.title or "Group"
+                group_username = chat.username
+            except Exception:
+                group_title = "Group"
+                group_username = None
+                
+            msg_id = battle.get("message_id")
+            link = ""
+            if msg_id:
+                if group_username:
+                    link = f"https://t.me/{group_username}/{msg_id}"
+                elif str(chat_id).startswith("-100"):
+                    link = f"https://t.me/c/{str(chat_id)[4:]}/{msg_id}"
+                    
+            if link:
+                group_info = f"\n• {html.bold('Group:')} <a href='{link}'>{group_title}</a>"
+            elif group_username:
+                group_info = f"\n• {html.bold('Group:')} {group_title} (@{group_username})"
+            else:
+                group_info = f"\n• {html.bold('Group:')} {group_title} ({chat_id})"
+        else:
+            group_info = f"\n• {html.bold('Group:')} Private DM"
+
     log_text = (
         f"⏱️ {html.bold('LeetCode Battle Forfeited (Inactivity Resume Timeout)')} ⏱️\n\n"
         f"• {html.bold('Battle ID:')} {html.code(battle_id)}\n"
         f"• {html.bold('Problem:')} {battle['problem_title']}\n"
         f"• {html.bold('Winner:')} {w_name} ({initiator_id})\n"
         f"• {html.bold('Loser (Inactive):')} {l_name} ({opponent_id})"
+        f"{group_info}"
     )
     await send_log(log_text, disable_notification=True)
 
@@ -1075,14 +1413,54 @@ async def cmd_resumebattle(message: Message, command: CommandObject):
             "SELECT * FROM battles WHERE (challenger_id = $1 OR opponent_id = $1) AND status = 'PAUSED'",
             user_id
         )
-        if len(rows) > 1:
+        group_rows = await db.fetch(
+            """
+            SELECT DISTINCT gb.*
+            FROM group_battles gb
+            LEFT JOIN group_battle_participants gbp ON gb.id = gbp.group_battle_id
+            WHERE (gbp.telegram_id = $1 OR gb.created_by = $1) AND gb.status = 'PAUSED'
+            """,
+            user_id
+        )
+        all_battles = [dict(r) for r in rows] + [dict(r) for r in group_rows]
+        if len(all_battles) > 1:
             await message.reply("⚠️ You have multiple paused battles. Please specify the battle ID or reply to the battle message:\n`/resumebattle <battle_uuid>`")
             return
-        elif len(rows) == 1:
-            battle = dict(rows[0])
+        elif len(all_battles) == 1:
+            battle = all_battles[0]
         else:
             await message.reply("❌ You do not have any paused battles to resume.")
             return
+
+    battle_id = str(battle["id"])
+    is_group = "group_id" in battle
+    remaining = battle["remaining_seconds"] or 3600
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expires_at = now + datetime.timedelta(seconds=remaining)
+
+    if is_group:
+        role = await get_user_role(user_id, message.chat.id, message.chat.type, message.bot)
+        has_admin_override = (role >= UserRole.GROUP_ADMIN) or (role >= UserRole.COORDINATOR)
+        is_host = (user_id == battle["created_by"])
+        if not is_host and not has_admin_override:
+            await message.reply("❌ You do not have permission to resume this battle.")
+            return
+        if battle["status"] != "PAUSED":
+            await message.reply(f"❌ Battle is not paused (Status: {battle['status']}).")
+            return
+
+        await db.execute(
+            "UPDATE group_battles SET status = 'ACTIVE', paused_at = NULL, remaining_seconds = NULL, expires_at = $2 WHERE id = $1::uuid",
+            battle_id, expires_at
+        )
+        await message.reply(
+            f"▶️ {html.bold('Group Battle Resumed')} ▶️\n\n"
+            f"🆔 Battle ID: {html.code(battle_id)}\n"
+            f"Problem: {battle['problem_title']}\n\n"
+            f"The battle has resumed! Timer continues at {remaining // 60}m {remaining % 60}s remaining.",
+            parse_mode="HTML"
+        )
+        return
 
     is_player = (user_id == battle["challenger_id"] or user_id == battle["opponent_id"])
     role = await get_user_role(user_id, message.chat.id, message.chat.type, message.bot)
@@ -1281,6 +1659,39 @@ async def process_gbattle_start(callback_query: CallbackQuery):
     
     await db.update_group_battle_status(battle_id, "ACTIVE", starts_at=now, expires_at=expires_at)
     
+    # Log group battle started to log channel
+    try:
+        from src.utils.logging_helper import send_log
+        chat = callback_query.message.chat
+        group_title = chat.title or "Group"
+        group_username = chat.username
+        msg_id = callback_query.message.message_id
+        
+        link = ""
+        if group_username:
+            link = f"https://t.me/{group_username}/{msg_id}"
+        elif str(chat.id).startswith("-100"):
+            link = f"https://t.me/c/{str(chat.id)[4:]}/{msg_id}"
+            
+        if link:
+            group_info = f"<a href='{link}'>{group_title}</a>"
+        elif group_username:
+            group_info = f"{group_title} (@{group_username})"
+        else:
+            group_info = f"{group_title} ({chat.id})"
+            
+        log_text = (
+            f"⚔️ {html.bold('Group LeetCode Battle Started')} ⚔️\n\n"
+            f"• {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+            f"• {html.bold('Group:')} {group_info}\n"
+            f"• {html.bold('Problem:')} {battle['problem_title']}\n"
+            f"• {html.bold('Host:')} @{callback_query.from_user.username or callback_query.from_user.first_name} ({callback_query.from_user.id})\n"
+            f"• {html.bold('Total Players:')} {len(participants)}"
+        )
+        await send_log(log_text, disable_notification=True)
+    except Exception as log_err:
+        logger.error(f"Error logging group battle start: {log_err}")
+    
     battle_url = f"https://leetcode.com/problems/{battle['problem_slug']}"
     players_str = "\n".join([f"• {p['first_name'] or p['username'] or str(p['telegram_id'])} (⌛ Coding...)" for p in participants])
     
@@ -1293,6 +1704,280 @@ async def process_gbattle_start(callback_query: CallbackQuery):
         f"🚀 Solve the problem on LeetCode and submit it! The bot will automatically check and compile the leaderboard."
     )
     
-    await callback_query.message.edit_text(start_msg, parse_mode="HTML", disable_web_page_preview=True)
+    verify_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Verify Solve", callback_data=f"gbattle_verify:{battle_id}")]
+    ])
+    await callback_query.message.edit_text(start_msg, reply_markup=verify_keyboard, parse_mode="HTML", disable_web_page_preview=True)
     await callback_query.answer("Battle started!")
+
+
+@router.callback_query(F.data.startswith("battle_verify:"))
+async def process_battle_verify(callback_query: CallbackQuery):
+    battle_id = callback_query.data.split(":")[1]
+    clicker_id = callback_query.from_user.id
+    cooldown_key = (clicker_id, battle_id)
+    now = datetime.datetime.now()
+    if cooldown_key in VERIFY_COOLDOWNS:
+        elapsed = (now - VERIFY_COOLDOWNS[cooldown_key]).total_seconds()
+        if elapsed < 30:
+            await callback_query.answer(f"⏱️ Please wait {int(30 - elapsed)}s before checking again.", show_alert=True)
+            return
+    
+    battle = await db.get_battle(battle_id)
+    if not battle:
+        await callback_query.answer("⚠️ Battle not found.", show_alert=True)
+        return
+    if battle["status"] != "ACTIVE":
+        await callback_query.answer(f"⚠️ This battle is not active (Status: {battle['status'].lower()}).", show_alert=True)
+        return
+
+    is_player = (clicker_id == battle["challenger_id"] or clicker_id == battle["opponent_id"])
+    if not is_player:
+        await callback_query.answer("⚠️ You are not a participant in this battle.", show_alert=True)
+        return
+
+    VERIFY_COOLDOWNS[cooldown_key] = now
+    await callback_query.answer("Checking LeetCode submissions...")
+
+    challenger_link = await db.get_linked_account(battle["challenger_id"])
+    opponent_link = await db.get_linked_account(battle["opponent_id"])
+    if not challenger_link or not opponent_link:
+        await callback_query.message.reply("❌ Cannot verify solve: linked accounts not found.")
+        return
+
+    c_user = challenger_link["leetcode_username"]
+    o_user = opponent_link["leetcode_username"]
+
+    c_subs, o_subs = await asyncio.gather(
+        leetcode_client.get_recent_accepted_submissions(c_user, limit=5),
+        leetcode_client.get_recent_accepted_submissions(o_user, limit=5),
+        return_exceptions=True
+    )
+    if isinstance(c_subs, Exception):
+        logger.error(f"Error checking submissions for {c_user}: {c_subs}")
+        c_subs = []
+    if isinstance(o_subs, Exception):
+        logger.error(f"Error checking submissions for {o_user}: {o_subs}")
+        o_subs = []
+
+    started_at = battle["started_at"]
+    if isinstance(started_at, str):
+        started_at = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    elif started_at and started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=datetime.timezone.utc)
+
+    c_solved_ts = None
+    o_solved_ts = None
+
+    for sub in c_subs:
+        if sub["titleSlug"] == battle["problem_slug"]:
+            sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
+            if sub_time > started_at:
+                c_solved_ts = sub_time
+                break
+
+    for sub in o_subs:
+        if sub["titleSlug"] == battle["problem_slug"]:
+            sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
+            if sub_time > started_at:
+                o_solved_ts = sub_time
+                break
+
+    winner_id = None
+    loser_id = None
+
+    if c_solved_ts and o_solved_ts:
+        if c_solved_ts < o_solved_ts:
+            winner_id = battle["challenger_id"]
+            loser_id = battle["opponent_id"]
+        else:
+            winner_id = battle["opponent_id"]
+            loser_id = battle["challenger_id"]
+    elif c_solved_ts:
+        winner_id = battle["challenger_id"]
+        loser_id = battle["opponent_id"]
+    elif o_solved_ts:
+        winner_id = battle["opponent_id"]
+        loser_id = battle["challenger_id"]
+
+    if winner_id:
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        await db.update_battle_status(battle["id"], "COMPLETED", winner_id=winner_id, ended_at=now_utc)
+        await db.add_xp_coins(winner_id, xp=100, coins=20)
+        await db.add_xp_coins(loser_id, xp=20, coins=0)
+
+        winner_row = await db.fetchrow("SELECT username, first_name FROM users WHERE telegram_id = $1", winner_id)
+        loser_row = await db.fetchrow("SELECT username, first_name FROM users WHERE telegram_id = $1", loser_id)
+        w_name = winner_row["first_name"] or winner_row["username"] or "Winner"
+        l_name = loser_row["first_name"] or loser_row["username"] or "Loser"
+
+        from src.utils.logging_helper import send_log
+        log_text = (
+            f"🏆 {html.bold('LeetCode Battle Won (Verify Solve Button)')} 🏆\n\n"
+            f"• {html.bold('Battle ID:')} {html.code(str(battle['id']))}\n"
+            f"• {html.bold('Problem:')} {battle['problem_title']}\n"
+            f"• {html.bold('Winner:')} {w_name} ({winner_id})\n"
+            f"• {html.bold('Loser:')} {l_name} ({loser_id})"
+        )
+        await send_log(log_text, disable_notification=True)
+
+        winner_url = f"https://leetcode.com/problems/{battle['problem_slug']}"
+        result_msg = (
+            f"🎉 {html.bold('LeetCode Battle Completed!')} 🎉\n\n"
+            f"🏆 Problem: <a href='{winner_url}'>{battle['problem_title']}</a>\n"
+            f"🥇 Winner: {html.bold(w_name)} (Awarded 100 XP, 20 coins)\n"
+            f"🥈 Loser: {html.bold(l_name)} (Awarded 20 XP)\n\n"
+            f"Congratulations to both players for competing!"
+        )
+
+        try:
+            await callback_query.message.edit_text(result_msg, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
+            pass
+        try:
+            await callback_query.bot.send_message(chat_id=battle["challenger_id"], text=result_msg, parse_mode="HTML", disable_web_page_preview=True)
+            await callback_query.bot.send_message(chat_id=battle["opponent_id"], text=result_msg, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
+            pass
+    else:
+        await callback_query.message.reply(
+            f"❌ {html.bold('Verification Failed')}\n\n"
+            f"We checked both players but did not find any accepted submission for "
+            f"{html.bold(battle['problem_title'])} on LeetCode since the battle started.\n"
+            f"Make sure to solve it first and wait a few seconds for LeetCode to save your submission!",
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.startswith("gbattle_verify:"))
+async def process_gbattle_verify(callback_query: CallbackQuery):
+    battle_id = callback_query.data.split(":")[1]
+    clicker_id = callback_query.from_user.id
+    cooldown_key = (clicker_id, battle_id)
+    now = datetime.datetime.now()
+    if cooldown_key in VERIFY_COOLDOWNS:
+        elapsed = (now - VERIFY_COOLDOWNS[cooldown_key]).total_seconds()
+        if elapsed < 30:
+            await callback_query.answer(f"⏱️ Please wait {int(30 - elapsed)}s before checking again.", show_alert=True)
+            return
+
+    battle = await db.get_group_battle(battle_id)
+    if not battle:
+        await callback_query.answer("⚠️ Battle not found.", show_alert=True)
+        return
+    if battle["status"] != "ACTIVE":
+        await callback_query.answer(f"⚠️ This battle is not active (Status: {battle['status'].lower()}).", show_alert=True)
+        return
+
+    participants = await db.get_group_battle_participants(battle_id)
+    is_part = any(p["telegram_id"] == clicker_id for p in participants)
+    if not is_part:
+        await callback_query.answer("⚠️ You are not a participant in this group battle.", show_alert=True)
+        return
+
+    VERIFY_COOLDOWNS[cooldown_key] = now
+    await callback_query.answer("Checking LeetCode submissions...")
+
+    unsolved_parts = [p for p in participants if p["solved_at"] is None]
+    if not unsolved_parts:
+        await callback_query.answer("All participants have already solved this problem.")
+        return
+
+    telegram_ids = [p["telegram_id"] for p in unsolved_parts]
+    user_to_leetcode = await db.get_verified_links_for_users(telegram_ids)
+
+    async def check_user_sub(p):
+        tg_id = p["telegram_id"]
+        leetcode_user = user_to_leetcode.get(tg_id)
+        if not leetcode_user:
+            return None
+        try:
+            subs = await leetcode_client.get_recent_accepted_submissions(leetcode_user, limit=5)
+            return tg_id, subs
+        except Exception as e:
+            logger.error(f"Error checking submissions for group player {leetcode_user}: {e}")
+            return tg_id, []
+
+    results = await asyncio.gather(*[check_user_sub(p) for p in unsolved_parts])
+    user_subs_map = {r[0]: r[1] for r in results if r is not None}
+
+    starts_at = battle["starts_at"]
+    if isinstance(starts_at, str):
+        starts_at = datetime.datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+    elif starts_at and starts_at.tzinfo is None:
+        starts_at = starts_at.replace(tzinfo=datetime.timezone.utc)
+
+    solves_updated = False
+
+    for p in unsolved_parts:
+        tg_id = p["telegram_id"]
+        subs = user_subs_map.get(tg_id, [])
+        for sub in subs:
+            if sub["titleSlug"] == battle["problem_slug"]:
+                sub_time = datetime.datetime.fromtimestamp(int(sub["timestamp"]), tz=datetime.timezone.utc)
+                if sub_time > starts_at:
+                    solve_time = int((sub_time - starts_at).total_seconds())
+                    await db.update_group_participant_solve(battle_id, tg_id, sub_time, solve_time)
+                    p["solved_at"] = sub_time
+                    p["solve_time_seconds"] = solve_time
+                    solves_updated = True
+
+                    solved_msg = (
+                        f"🎉 {html.bold('LeetCode Group Battle Solve!')} 🏆\n\n"
+                        f"• Player: <a href='tg://user?id={tg_id}'>{p['first_name'] or p['username']}</a>\n"
+                        f"• Problem: {battle['problem_title']}\n"
+                        f"• Time Taken: {solve_time // 60}m {solve_time % 60}s\n\n"
+                        f"Great job! Keep it up! 💪"
+                    )
+                    try:
+                        await callback_query.message.bot.send_message(chat_id=battle["group_id"], text=solved_msg, parse_mode="HTML")
+                    except Exception as e:
+                        logger.error(f"Error sending solve notification: {e}")
+                    break
+
+    participants = await db.get_group_battle_participants(battle_id)
+    all_solved = all(p["solved_at"] is not None for p in participants)
+    if all_solved and solves_updated:
+        await db.update_group_battle_status(battle_id, "COMPLETED")
+        from src.main import end_group_battle
+        await end_group_battle(battle, participants, expired=False)
+        try:
+            await callback_query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    elif solves_updated:
+        battle_url = f"https://leetcode.com/problems/{battle['problem_slug']}"
+        refreshed_players = []
+        for p in participants:
+            if p["solved_at"] is not None:
+                st = p["solve_time_seconds"]
+                refreshed_players.append(f"• {p['first_name'] or p['username']} (✅ Solved in {st // 60}m {st % 60}s)")
+            else:
+                refreshed_players.append(f"• {p['first_name'] or p['username']} (⌛ Coding...)")
+        players_str = "\n".join(refreshed_players)
+
+        start_msg = (
+            f"⚔️ {html.bold('Group Battle Started!')} ⚔️\n\n"
+            f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+            f"🏆 Problem: <a href='{battle_url}'>{battle['problem_title']}</a> ({battle['difficulty']})\n"
+            f"⏳ Deadline: {html.code('60 minutes')} from now\n\n"
+            f"👥 {html.bold('Players in Arena:')}\n{players_str}\n\n"
+            f"🚀 Solve the problem on LeetCode and submit it! The bot will automatically check and compile the leaderboard."
+        )
+
+        verify_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Verify Solve", callback_data=f"gbattle_verify:{battle_id}")]
+        ])
+        try:
+            await callback_query.message.edit_text(start_msg, reply_markup=verify_keyboard, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception:
+            pass
+    else:
+        await callback_query.message.reply(
+            f"❌ {html.bold('Verification Failed')}\n\n"
+            f"We checked all active players but did not find any new accepted submissions for "
+            f"{html.bold(battle['problem_title'])} on LeetCode since the battle started.\n"
+            f"Make sure to solve it on LeetCode first!",
+            parse_mode="HTML"
+        )
 

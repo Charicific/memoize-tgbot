@@ -53,18 +53,8 @@ class LeetCodeClient:
         try:
             response = await client.post(self.BASE_URL, json=payload, headers=headers)
             latency = (time.time() - start_time) * 1000
-            if latency > 1000:
+            if latency > 5000:
                 logger.warning(f"SLOW LeetCode API Query ({latency:.1f}ms)")
-                try:
-                    from src.utils.logging_helper import send_log
-                    import asyncio
-                    asyncio.create_task(send_log(
-                        f"⚠️ <b>Slow LeetCode API Query</b> ({latency:.1f}ms)\n"
-                        f"Query: <code>{query[:150]}...</code>",
-                        disable_notification=True
-                    ))
-                except Exception:
-                    pass
 
             if response.status_code == 200:
                 data = response.json()

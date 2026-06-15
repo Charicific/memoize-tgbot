@@ -110,7 +110,13 @@ class SupabaseDB:
                 await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS remaining_seconds INT;")
                 await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS chat_id BIGINT;")
                 await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS message_id BIGINT;")
-                logger.info("Checked/Added paused_at, remaining_seconds, chat_id, and message_id columns to battles table.")
+                await self.execute("ALTER TABLE battles ADD COLUMN IF NOT EXISTS difficulty VARCHAR(50);")
+                logger.info("Checked/Added paused_at, remaining_seconds, chat_id, message_id, and difficulty columns to battles table.")
+
+                # Add paused_at and remaining_seconds columns to group_battles table
+                await self.execute("ALTER TABLE group_battles ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE;")
+                await self.execute("ALTER TABLE group_battles ADD COLUMN IF NOT EXISTS remaining_seconds INT;")
+                logger.info("Checked/Added paused_at and remaining_seconds columns to group_battles table.")
 
             except Exception as e:
                 logger.error(f"Failed to connect to database: {e}")
@@ -128,15 +134,8 @@ class SupabaseDB:
         async with self.pool.acquire() as conn:
             res = await conn.execute(query, *args)
         latency = (time.time() - start) * 1000
-        if latency > 500:
+        if latency > 5000:
             logger.warning(f"SLOW DB Execute ({latency:.1f}ms): {query[:200]}")
-            try:
-                from src.utils.logging_helper import send_log
-                from html import escape as html_escape
-                import asyncio
-                asyncio.create_task(send_log(f"⚠️ <b>Slow DB Execution</b> ({latency:.1f}ms):\n<code>{html_escape(query[:300])}</code>", disable_notification=True))
-            except Exception:
-                pass
         return res
 
     async def fetch(self, query: str, *args) -> List[asyncpg.Record]:
@@ -145,15 +144,8 @@ class SupabaseDB:
         async with self.pool.acquire() as conn:
             res = await conn.fetch(query, *args)
         latency = (time.time() - start) * 1000
-        if latency > 500:
+        if latency > 5000:
             logger.warning(f"SLOW DB Fetch ({latency:.1f}ms): {query[:200]}")
-            try:
-                from src.utils.logging_helper import send_log
-                from html import escape as html_escape
-                import asyncio
-                asyncio.create_task(send_log(f"⚠️ <b>Slow DB Fetch</b> ({latency:.1f}ms):\n<code>{html_escape(query[:300])}</code>", disable_notification=True))
-            except Exception:
-                pass
         return res
 
     async def fetchrow(self, query: str, *args) -> Optional[asyncpg.Record]:
@@ -162,15 +154,8 @@ class SupabaseDB:
         async with self.pool.acquire() as conn:
             res = await conn.fetchrow(query, *args)
         latency = (time.time() - start) * 1000
-        if latency > 500:
+        if latency > 5000:
             logger.warning(f"SLOW DB Fetchrow ({latency:.1f}ms): {query[:200]}")
-            try:
-                from src.utils.logging_helper import send_log
-                from html import escape as html_escape
-                import asyncio
-                asyncio.create_task(send_log(f"⚠️ <b>Slow DB Fetchrow</b> ({latency:.1f}ms):\n<code>{html_escape(query[:300])}</code>", disable_notification=True))
-            except Exception:
-                pass
         return res
 
     # --- Users ---
@@ -216,6 +201,15 @@ class SupabaseDB:
     async def get_linked_account(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         row = await self.fetchrow("SELECT * FROM linked_accounts WHERE telegram_id = $1", telegram_id)
         return dict(row) if row else None
+
+    async def get_verified_links_for_users(self, telegram_ids: List[int]) -> Dict[int, str]:
+        if not telegram_ids:
+            return {}
+        rows = await self.fetch(
+            "SELECT telegram_id, leetcode_username FROM linked_accounts WHERE telegram_id = ANY($1::bigint[]) AND verified = TRUE",
+            telegram_ids
+        )
+        return {r["telegram_id"]: r["leetcode_username"] for r in rows}
 
     async def get_user_by_leetcode(self, leetcode_username: str) -> Optional[Dict[str, Any]]:
         row = await self.fetchrow("SELECT * FROM linked_accounts WHERE leetcode_username = $1 AND verified = TRUE", leetcode_username)
@@ -290,13 +284,13 @@ class SupabaseDB:
         return [dict(r) for r in rows]
 
     # --- Battles ---
-    async def create_battle(self, challenger_id: int, opponent_id: int, problem_slug: str, problem_title: str, expires_at: datetime.datetime) -> Dict[str, Any]:
+    async def create_battle(self, challenger_id: int, opponent_id: int, problem_slug: str, problem_title: str, difficulty: str, expires_at: datetime.datetime) -> Dict[str, Any]:
         query = """
-        INSERT INTO battles (challenger_id, opponent_id, problem_slug, problem_title, status, expires_at)
-        VALUES ($1, $2, $3, $4, 'PENDING', $5)
+        INSERT INTO battles (challenger_id, opponent_id, problem_slug, problem_title, difficulty, status, expires_at)
+        VALUES ($1, $2, $3, $4, $5, 'PENDING', $6)
         RETURNING *
         """
-        row = await self.fetchrow(query, challenger_id, opponent_id, problem_slug, problem_title, expires_at)
+        row = await self.fetchrow(query, challenger_id, opponent_id, problem_slug, problem_title, difficulty, expires_at)
         return dict(row)
 
     async def update_battle_message(self, battle_id: str, chat_id: int, message_id: int):
