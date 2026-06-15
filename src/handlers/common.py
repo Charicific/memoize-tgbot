@@ -104,33 +104,52 @@ async def cmd_start(message: Message, command: CommandObject):
 async def cmd_help(message: Message):
     help_text = (
         f"📚 {html.bold('Available Commands:')}\n\n"
+        
         f"⚙️ {html.bold('Profile & Accounts:')}\n"
-        f"• {html.code('/link &lt;leetcode_username&gt;')} — Link your LeetCode account\n"
-        "• `/verify` — Verify ownership via LeetCode bio\n"
-        "• `/unlink` — Unlink your LeetCode account from the bot\n"
-        "• `/profile` — View your progress, XP, coins, and LeetCode stats\n"
-        "• `/streak` — View your LeetCode submission streak (consecutive active calendar days)\n"
-        "• `/dstreak` — View your LeetCode Daily Challenge streak (consecutive daily challenge solves)\n\n"
+        f"• `/start` — Start onboarding and welcome message\n"
+        f"• `/help` — Show this comprehensive command guide\n"
+        f"• {html.code('/link &lt;leetcode_username&gt;')} — Connect your LeetCode profile\n"
+        f"• `/verify` — Verify ownership via LeetCode bio code\n"
+        f"• `/unlink` — Disconnect your LeetCode profile\n"
+        f"• `/profile` — View level, XP, coins, and LeetCode stats\n"
+        f"• `/myrole` — Check your permission level in this chat\n\n"
+        
         f"⚔️ {html.bold('Practice & Competitions:')}\n"
-        "• `/daily` — Fetch today's LeetCode challenge\n"
-        "• `/random [difficulty] [tag]` — Get a random problem (e.g. `/random medium dp`)\n"
-        "• `/contest` — Check upcoming contests and schedule alerts\n"
-        "• `/battle @username` — Challenge a friend to a 1v1 LeetCode battle\n"
-        "• `/battle open [difficulty] [tag]` — Launch an open group battle lobby\n"
-        "• `/leaderboard` — View the leaderboard (group-exclusive in groups, global in DM)\n"
-        "• `/gleaderboard` — View the global top 10 leaderboard\n\n"
-
+        f"• `/daily` — Fetch today's LeetCode Daily Challenge\n"
+        f"• {html.code('/random [difficulty] [tag]')} — Get a random free problem\n"
+        f"• `/contest` — List upcoming LeetCode contests\n\n"
+        
         f"🧠 {html.bold('Spaced Repetition (SRS):')}\n"
-        f"• {html.code('/solved &lt;problem_slug&gt; &lt;quality&gt;')} — Log a problem solved & schedule review (quality: 0=forgot, 5=perfect)\n\n"
+        f"• {html.code('/solved [slug] [quality]')} — Log solved problem & schedule review (0-5 scale)\n\n"
+        
+        f"🔥 {html.bold('Coding Streaks:')}\n"
+        f"• `/streak` — View LeetCode calendar submission streak\n"
+        f"• `/dstreak` — View local Daily Challenge solve streak\n\n"
+        
         f"🤖 {html.bold('AI Features:')}\n"
-        f"• {html.code('/hint &lt;problem_slug&gt;')} — Get progressive hints (Llama 3.3)\n"
+        f"• {html.code('/hint &lt;problem_slug&gt;')} — Get progressive tips for a problem (Llama 3.3)\n"
         f"• {html.code('/analyze &lt;paste_code&gt;')} — Time/space complexity analysis (Llama 3.3)\n"
-        f"• {html.code('/review &lt;paste_code&gt;')} — Full structural code review (Gemini Flash 2.0)\n"
-        f"• {html.code('/visualize &lt;paste_code&gt;')} — Control flow flowchart & variable trace (Llama 3.3)\n\n"
-        f"🛠️ {html.bold('Utility:')}\n"
-        "• `/ping` — Measure bot response speed & DB latency\n"
-        "• `/stats` — View bot usage and statistics\n"
-        "• `/reminders` — Configure personal alerts (daily challenge, streaks, contests)"
+        f"• {html.code('/review &lt;paste_code&gt;')} — Code quality audit (Gemini Flash 2.0)\n"
+        f"• {html.code('/visualize &lt;paste_code&gt;')} — Flowchart & variable trace (Llama 3.3)\n\n"
+        
+        f"🔔 {html.bold('Settings & Reminders:')}\n"
+        f"• `/reminders` — Manage daily challenge, streak, and contest alerts\n\n"
+        
+        f"📊 {html.bold('Leaderboards:')}\n"
+        f"• `/leaderboard` — View group XP leaderboard\n"
+        f"• `/gleaderboard` — View global XP leaderboard\n\n"
+        
+        f"🎮 {html.bold('Coding Battles:')}\n"
+        f"• {html.code('/battle @username')} — Challenge a friend to 1v1 battle\n"
+        f"• {html.code('/battle open [difficulty] [tag]')} — Create group battle lobby\n"
+        f"• `/stopbattle` — Propose draw (1v1) or cancel battle (Group host/admin)\n"
+        f"• `/pausebattle` — Propose pause (1v1) or freeze timer (Group host/admin)\n"
+        f"• `/resumebattle` — Propose resume (1v1) or restart timer (Group host/admin)\n\n"
+        
+        f"🛡️ {html.bold('Group Moderation:')}\n"
+        f"• {html.code('/config_group &lt;setting&gt; &lt;value&gt;')} — Toggle battles/feed settings\n"
+        f"• {html.code('/mute_battle @username &lt;on/off&gt;')} — Mute/unmute member from battles\n"
+        f"• `/clear_group_history` — Reset group leaderboard stats"
     )
     await message.reply(help_text, parse_mode="HTML")
 
