@@ -271,6 +271,20 @@ Follow this logical path to verify the full bot logic:
 *   **Action:** Send `/broadcast <b>Update:</b> Bot is operating normally.` as super admin.
     *   *Expected:* Broadcast runs asynchronously, delivering the HTML message directly to all registered users in private DMs.
 
+### 7. Conversational Fallback & Topic Navigation
+* **Action**: In private DM, send a greeting like `"hello"` or `"hi Memoize"`.
+  * **Expected**: Bot replies with a friendly greeting detailing its features, accompanied by a balanced 2x3 topic navigation inline keyboard (including `"🔗 Link Profile"`).
+* **Action**: Send a message with a specific topic keyword like `"tell me about coding battles"` or `"how do I connect my profile?"`.
+  * **Expected**: Bot matches the keyword and replies with the relevant guide (Battles Guide / Link Profile), setting the topic context in cache.
+* **Action**: Send a follow-up query containing `"how do I play?"` or `"verification failing, troubleshoot please"`.
+  * **Expected**: Bot checks the active context (e.g., `"battles"` or `"link"`) and replies with specific follow-up instructions (e.g. Battle Startup Steps / Link Verification Troubleshooting).
+* **Action**: Send sentiment-expressing text like `"thank you so much!"` or `"bye bye!"`.
+  * **Expected**: Bot responds with a friendly rule-based reply (gratitude or goodbye farewell) and resets active context.
+* **Action**: Send any text that does not match any keywords (e.g. `"xyz abc"`).
+  * **Expected**: Bot replies with a clean fallback message ("I didn't quite catch that...") along with the interactive 2x3 inline menu.
+* **Action**: Click on an inline button (e.g. `"🔗 Link Profile"`).
+  * **Expected**: Bot edits the message text dynamically to show the LeetCode Account Linking & Verification guide while keeping the inline navigation keyboard.
+
 ---
 
 ## Verification Troubleshooting

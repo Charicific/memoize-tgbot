@@ -10,6 +10,7 @@ Welcome to the comprehensive, definitive developer and architect guide for the *
 3. [Database Schemas & Data Models](#3-database-schemas--data-models)
 4. [Middlewares & Security Layer](#4-middlewares--security-layer)
 5. [Dynamic Role Resolution & Hierarchy](#5-dynamic-role-resolution--hierarchy)
+5.5. [Conversational Fallback & Rule-Based Chat Routing](#55-conversational-fallback--rule-based-chat-routing)
 6. [Background Schedulers & Workers](#6-background-schedulers--workers)
 7. [Service Layer Implementations](#7-service-layer-implementations)
 8. [Command Dictionary (36 Commands)](#8-command-dictionary-36-commands)
@@ -288,6 +289,27 @@ Whenever a user's role is modified via `/setrole`, the bot automatically invalid
 
 ---
 
+## 5.5. Conversational Fallback & Rule-Based Chat Routing
+
+To enhance user experience and guide users to features, the bot intercepts all incoming non-command text messages in private DMs (and group messages where the bot is explicitly @-mentioned) using the catch-all router in [chat.py](file:///d:/Ongoing_projects/memoize-tgbot/src/handlers/chat.py).
+
+### Core Mechanics
+* **Rate Limiting:** Prevents flooding using a token bucket rate limiter (5 queries per 60 seconds) tracked in Upstash Redis.
+* **Context State Tracking:** Stores the active topic context (`battles`, `srs`, `ai`, `link`, or `general`) in Redis with a 5-minute (300s) TTL.
+* **Precedence-Based Routing Pipeline:**
+  1. **Context-Aware Follow-ups:** Checks if the user is asking follow-up questions (e.g. "how do I play?", "it failed, troubleshoot please") matching the active topic context first.
+  2. **Sentiment Handling:** Automatically detects basic sentiments such as gratitude ("thanks", "thank you", "ty") and goodbyes ("bye", "goodbye", "see you") to respond with friendly, rule-based standard replies.
+  3. **Keyword Classifier:** Evaluates tokenized inputs against specific topic keyword sets:
+     * *Link & Verification:* `/link`, `/verify` commands, and bio authentication steps.
+     * *Battles:* 1v1 and multiplayer open battle lobbies.
+     * *Spaced Repetition (SRS):* `/solved` logging, SuperMemo SM-2, and recall grading scales.
+     * *AI Coaching:* Step-by-step hints, Big-O complexity, Gemini reviews, and Mermaid flowcharts.
+     * *Streaks:* LeetCode calendar streaks and Daily Challenge check scheduling.
+     * *Greetings & About:* Welcomes users and introduces bot details.
+  4. **Generic Catch-All:** Returns an interactive 2x3 inline help keyboard prompting the user to choose a topic.
+
+---
+
 ## 6. Background Schedulers & Workers
 
 Background scheduler routines run concurrently using the `AsyncIOScheduler` from `apscheduler`. The scheduler uses a persistent SQLAlchemy jobstore pointed at Supabase PostgreSQL to prevent jobs from being wiped when the server container restarts.
@@ -442,6 +464,7 @@ memoize-tgbot/
 │   │   ├── __init__.py             #   └── Router registrations
 │   │   ├── admin.py                #   └── Global administrator commands
 │   │   ├── ai.py                   #   └── AI hints, analysis, & code review
+│   │   ├── chat.py                 #   └── Rule-based conversational fallback & navigation
 │   │   ├── common.py               #   └── Account linking, onboarding, profiles
 │   │   ├── community.py            #   └── Battles, draws, mutes, group leaderboards
 │   │   ├── daily.py                #   └── Daily challenges, contests, random picks

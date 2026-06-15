@@ -268,9 +268,245 @@ class TestLeetCodeClientMock(unittest.IsolatedAsyncioTestCase):
         # Verify that solve times are relative to started_at
         challenger_duration = (c_solved_ts - started_at).total_seconds()
         opponent_duration = (o_solved_ts - started_at).total_seconds()
-        
         self.assertEqual(challenger_duration, 300)  # 5 minutes
         self.assertEqual(opponent_duration, 600)    # 10 minutes
+
+
+class TestConversationalFallback(unittest.IsolatedAsyncioTestCase):
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_greeting(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        
+        # Mock message
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "Hello Memoize!"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        # Should reply with greeting and set context in cache
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("Hello there", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "general", expire_seconds=300)
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_topic_battles(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "tell me about coding battles"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("Coding Battles Guide", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "battles", expire_seconds=300)
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_context_followup(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        # Simulate context loaded from Redis is "battles"
+        mock_cache.get = AsyncMock(return_value="battles")
+        mock_cache.set = AsyncMock()
+        
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "how do I play?"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("How to Start a Coding Battle", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "battles", expire_seconds=300)
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_unknown_message(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "random gibberish"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("I didn't quite catch that", args[0])
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_topic_link(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "how do I link my account?"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("LeetCode Account Linking & Verification", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "link", expire_seconds=300)
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_link_followup(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        # Simulate active context is "link"
+        mock_cache.get = AsyncMock(return_value="link")
+        mock_cache.set = AsyncMock()
+        
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "verification is failing, troubleshoot please"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("Linking & Verification Troubleshooting", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "link", expire_seconds=300)
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_sentiment_gratitude(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "Thank you so much, very helpful!"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("You're very welcome", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "general", expire_seconds=300)
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_sentiment_goodbye(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "see you later, bye!"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("Goodbye", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "general", expire_seconds=300)
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_synonym_expansion(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        
+        # Test "coach" triggers AI coaching guide
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "where is my coach"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("AI Coaching Features", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "ai", expire_seconds=300)
+
+    @patch("src.handlers.chat.cache_manager")
+    async def test_fallback_sentiment_affirmation(self, mock_cache):
+        mock_cache.is_rate_limited = AsyncMock(return_value=False)
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        
+        mock_message = AsyncMock()
+        mock_message.chat.type = "private"
+        mock_message.from_user.id = 12345
+        mock_message.text = "okay sounds good"
+        
+        mock_bot = AsyncMock()
+        mock_bot.get_me = AsyncMock(return_value=AsyncMock(username="MemoizeLC_bot"))
+        mock_message.bot = mock_bot
+        
+        from src.handlers.chat import fallback_chat_handler
+        await fallback_chat_handler(mock_message)
+        
+        mock_message.reply.assert_called_once()
+        args, kwargs = mock_message.reply.call_args
+        self.assertIn("Got it", args[0])
+        mock_cache.set.assert_called_with("chat_topic:12345", "general", expire_seconds=300)
+
 
 if __name__ == "__main__":
     unittest.main()
