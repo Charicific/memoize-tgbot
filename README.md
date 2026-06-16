@@ -1,319 +1,638 @@
 <div align="center">
 
-<!-- Animated Header Banner -->
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0f172a,100:6366f1&height=220&section=header&text=LeetCode%20Companion&fontSize=56&fontColor=ffffff&fontAlignY=34&desc=Spaced%20Repetition%20•%201v1%20Battles%20•%20AI%20Coaching%20inside%20Telegram&descAlignY=64&descSize=16&animation=fadeIn" width="100%"/>
+<img src="assets/Memoize.png" alt="Memoize Bot Icon" width="160" />
 
 <br/>
 
-[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red?style=for-the-badge)](LICENSE)
-[![Python Version](https://img.shields.io/badge/Python-3.11+-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![aiogram](https://img.shields.io/badge/aiogram-3.x-f59e0b?style=for-the-badge&logo=telegram)](https://github.com/aiogram/aiogram)
-[![Supabase](https://img.shields.io/badge/Database-Supabase-3ECF8E?style=for-the-badge&logo=supabase)](https://supabase.com)
-[![Upstash Redis](https://img.shields.io/badge/Cache-Upstash-DC382D?style=for-the-badge&logo=redis)](https://upstash.com)
-[![Koyeb](https://img.shields.io/badge/Deployment-Koyeb-black?style=for-the-badge&logo=docker)](https://koyeb.com)
+# Memoize
+
+**Transform your LeetCode grind into something you actually look forward to.**
 
 <br/>
 
-<!-- Tagline -->
-> **Meet LeetCode Companion — a Telegram-native assistant that turns your LeetCode prep from a lonely browser grind into a highly retentive, gamified, and social learning habit.**
+[![Try on Telegram](https://img.shields.io/badge/Try%20Memoize-@MemoizeLC__bot-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/MemoizeLC_bot?start)
+&nbsp;
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+&nbsp;
+[![aiogram](https://img.shields.io/badge/aiogram-3.x-009688?style=for-the-badge&logo=telegram&logoColor=white)](https://docs.aiogram.dev/)
+&nbsp;
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
+&nbsp;
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+
+<br/>
+
+[![Infrastructure Cost](https://img.shields.io/badge/Infrastructure%20Cost-₹0%2Fmonth-brightgreen?style=flat-square)](https://koyeb.com)
+[![Deployment](https://img.shields.io/badge/Deployed%20on-Koyeb-blueviolet?style=flat-square&logo=docker)](https://koyeb.com)
+[![AI Powered](https://img.shields.io/badge/AI-Groq%20%2B%20Gemini-orange?style=flat-square)](https://console.groq.com)
+[![Spaced Repetition](https://img.shields.io/badge/Algorithm-SM--2%20Spaced%20Repetition-critical?style=flat-square)](https://supermemo.guru/wiki/SM-2)
+
+<br/>
+
+> **Daily Challenges · 1v1 Battles · AI Coaching · Spaced Repetition · Streaks · Leaderboards**
 >
-> Meet users where they already live. Spaced repetition retention, competitive multiplayer coding, and instant AI coaching — all right inside Telegram.
-
-<!-- Quick Links -->
-[** Features**](#-features) · [**Tech Stack**](#-tech-stack) · [**Architecture**](#-architecture) · [**Quick Start**](#-quick-start) · [**Project Structure**](#-project-structure) · [**License**](#-license)
-
-<br/>
-
-<!-- Separator -->
-<img src="https://user-images.githubusercontent.com/73097560/115834477-dbab4500-a447-11eb-908a-139a6edaec5c.gif" width="100%">
+> No new apps. No extra tabs. Just Telegram.
 
 </div>
+
+---
 
 ## Table of Contents
 
-- [Why LeetCode Companion?](#-why-leetcode-companion)
-- [Features](#-features)
-  - [Spaced Repetition (SRS) Engine](#-spaced-repetition-srs-engine)
-  - [Multiplayer Coding Battles](#-multiplayer-coding-battles)
-  - [AI Coaching (Groq + Gemini)](#-ai-coaching-groq--gemini)
-- [Tech Stack](#-tech-stack)
-- [Architecture](#-architecture)
-- [Quick Start](#-quick-start)
-  - [Prerequisites](#prerequisites)
-  - [Clone the Repository](#clone-the-repository)
-  - [Configure Database Schema](#configure-database-schema)
-  - [Configure Environment Variables](#configure-environment-variables)
-  - [Setup Local Environment & Run](#setup-local-environment--run)
-  - [Deployment Command](#deployment-command)
+- [What is Memoize?](#-what-is-memoize)
+- [Feature Overview](#-feature-overview)
+- [Command Reference](#-command-reference)
+- [Architecture](#️-architecture)
+- [Background Jobs](#-background-jobs)
+- [Database Schema](#-database-schema)
+- [Role Hierarchy](#-role-hierarchy)
 - [Project Structure](#-project-structure)
+- [Local Setup](#-local-setup)
+- [Environment Variables](#-environment-variables)
+- [Testing](#-testing)
+- [Production Deployment](#-production-deployment)
+- [Infrastructure Cost](#-infrastructure-cost)
+- [Contributing](#-contributing)
 - [License](#-license)
 
-<br/>
+---
 
-## Why LeetCode Companion?
+## 🧠 What is Memoize?
 
-> *"LeetCode owns the problem sets. This platform owns the learning journey around them."*
+Memoize is a **Telegram-native LeetCode companion** that meets you where you already are — no extra apps, no browser tabs, no context-switching. It wraps the full DSA practice loop into a single bot:
 
-Traditional LeetCode practice is isolating, browser-locked, and prone to the **forgetting curve** (where you solve a problem only to completely forget the logic two weeks later). We solve this inside the app you already use every day.
+| Without Memoize | With Memoize |
+|---|---|
+| Manually check LeetCode daily | Daily challenge auto-delivered every morning |
+| Screenshot to prove you solved it | Real-time submission verification via LeetCode API |
+| Forget problems after solving them | SM-2 algorithm schedules optimal review dates |
+| Stuck on a problem, no guidance | Progressive AI hints that nudge, not spoil |
+| Losing motivation solo | 1v1 battles and group leaderboards |
 
-<table>
-<td width="50%">
-
-### The Problem
-- **The Forgetting Curve:** No review tracking; code is written once and forgotten.
-- **Single Player Mode:** Hard to stay accountable or study with friends.
-- **Spoiler Hints:** Clicking LeetCode hints spoils the whole approach immediately.
-- **High Friction:** Constantly switching tabs to check stats or upcoming contests.
-
-</td>
-<td width="50%">
-
-### The Companion Way
-- **SM-2 Spaced Repetition:** Calculates recall risk and schedules reviews dynamically.
-- **1v1 Group Battles:** Compete against friends in real-time speed coding battles.
-- **Progressive Hinting:** Get conceptual, strategic, then pseudo-code hints.
-- **Telegram Native:** Instant notifications, inline checks, and stats at your fingertips.
-
-</td>
-</table>
-
-<br/>
-
-## Features
-
-### Spaced Repetition (SRS) Engine
-* **SM-2 Algorithm Integration:** Logs solved problems and automatically schedules the next review date based on your rated recall quality (0: forgot to 5: perfect).
-* **Interactive Button Interface:** Log your recall quality directly via Telegram callback buttons—no manual slug copying required.
-* **Daily Reminders:** Database cron checks trigger notifications about due reviews so you never break your retention schedule.
-
-### Multiplayer Coding Battles
-* **1v1 Challenges:** Invite any friend via `/battle @username`. The bot selects a random problem matching difficulty and tag filters.
-* **Real-time Submission Polling:** The bot runs background checks on LeetCode submission history to see who solved it first.
-* **Gamified Rewards:** The winner receives 100 XP and 20 coins, while the loser gets 20 XP for competing.
-* **Expiration Timers:** Battles automatically expire after 60 minutes if unresolved.
-
-### Interactive Battle Controls
-* **In-Game Timer Adjustments:** Support for pausing (`/pausebattle`) and resuming (`/resumebattle`) active battles via two-way player confirmation or administrative command override.
-* **Resume Inactivity Timeout:** If a paused battle is requested to be resumed, the opponent has 5 minutes to accept, or they automatically forfeit.
-* **Draw Proposals & Forfeits:** Propose a draw via `/stopbattle`. If accepted, the battle ends. If declined, the proposer can forfeit (giving the opponent a full win) or resume playing.
-
-### Submission & Daily Challenge Streak Tracking
-* **LeetCode Profile Streak (`/streak`):** Dynamically parses your LeetCode profile calendar to display your current streak, longest streak, and total active days.
-* **Daily Challenge Streak (`/dstreak`):** Tracks consecutive daily challenge solves logged in the bot database.
-* **Streak Protection Scheduler:** A background task runs daily at 15:00 UTC (8:30 PM IST) to check user activity. If you've solved today's daily challenge on LeetCode but haven't logged it, the bot **auto-logs the solve** to save your streak and awards 15 XP & 5 coins. If no solve is found, the bot sends a **streak warning alert** to remind you to practice.
-* **Custom Reminders (`/reminders`):** Toggle alerts in private DMs for daily challenge drops, streak warnings, and contest announcements.
-
-### AI Coaching (Groq + Gemini)
-* **Progressive Hints (`/hint`):** Returns hints step-by-step (Conceptual $\rightarrow$ Strategic $\rightarrow$ Pseudo-code) using Groq (Llama 3.3 70B) to help you learn without spoiling solutions.
-* **Complexity Analyst (`/analyze`):** Detailed Big-O analysis of your pasted code or in response to a replied code block.
-* **Gemini Code Review (`/review`):** Structural code audit assessing correctness, edge cases, readability, and providing optimized alternatives via Gemini 2.0 Flash.
-
-### Group Settings & Moderation
-* **Custom Group Toggles (`/config_group <setting> <enable/disable>`):** Group admins can toggle group-specific features, including whether `battles` or the LeetCode `feed` are enabled.
-* **Member Moderation (`/mute_battle <user> <on/off>`):** Group owners can mute specific members from starting/participating in battles.
-* **Group Reset (`/clear_group_history`):** Group owners can clear the group leaderboard and reset stats.
-
-### Global Bot Administration & Security
-* **Global Security Roles:** Security layer defining levels `USER`, `GROUP_ADMIN`, `GROUP_OWNER`, `COORDINATOR`, and `SUPER_ADMIN`.
-* **Bans & Moderation:** Global coordinators can ban (`/pban`) and unban (`/unpban`) users, check details (`/userinfo`), force verify LeetCode usernames (`/forceverify`), and monitor active battles (`/activebattles`).
-* **Super Admin Operations:** Super Admins can promote/demote coordinators (`/setrole`), enable/disable global maintenance mode (`/maintenance`), and broadcast announcements (`/broadcast`).
+> **[Start using Memoize now →](https://t.me/MemoizeLC_bot?start)**
 
 ---
 
-## Tech Stack
+## ✨ Feature Overview
 
-<div align="center">
+### 📅 Daily Challenges & Contest Alerts
+
+The bot automatically delivers **LeetCode's Daily Coding Challenge** to your groups and DMs every morning — complete with difficulty badge, topic tags, and formatted problem description. Contest alerts fire at four checkpoints:
+
+- When registration opens
+- 12 hours before start
+- 5 minutes before start
+- 10 minutes after end (results ping)
+
+---
+
+### ⚔️ 1v1 & Group Battles
+
+Challenge any linked user to a **timed coding duel**. The bot polls both players' LeetCode submission histories every minute to verify who solved the battle problem first — no screenshots, no honor system, no disputes.
+
+**How it works:**
+1. `/battle @user` — challenger picks an opponent and optionally filters by difficulty/tag
+2. Opponent receives a challenge notification and accepts/declines
+3. Bot assigns a problem and starts the timer simultaneously for both
+4. Submission poller detects the winning solve within ~60 seconds
+5. XP and coins are awarded automatically; result is posted in the group
+
+**Group battles** support open lobbies — post `/battle open` and multiple players can join before the timer starts.
+
+Participants can propose a **draw** (`/stopbattle`), **pause** (`/pausebattle`), or **resume** (`/resumebattle`) — each action requires the other party's agreement.
+
+---
+
+### 🔁 Spaced Repetition (SM-2)
+
+Every problem you log via `/solved` is scheduled for review using the **SuperMemo SM-2 algorithm** — the same science behind Anki.
+
+**The review loop:**
+1. `/solved two-sum` — logs the problem and schedules first review
+2. On review day, the bot sends a reminder: *"Time to recall: Two Sum"*
+3. You attempt the problem, then rate your recall from **0 (blackout) to 5 (perfect)**
+4. SM-2 recalculates the **ease factor** and **next interval** (1 day → 6 days → grows exponentially)
+5. Problems you struggle with resurface sooner; mastered ones fade into long-term review
+
+This turns your solve log into a **long-term memory system**, not just a history list.
+
+---
+
+### 🤖 AI Coaching
+
+Four distinct AI commands powered by **Groq (Llama 3.3 70B)** and **Gemini Flash 2.0**:
+
+| Command | What it does | Model |
+|---|---|---|
+| `/hint <slug>` | Progressive hints unlocked one at a time: conceptual → strategic → pseudocode | Groq Llama 3.3 70B |
+| `/analyze <code>` | Big-O time & space complexity breakdown with explanation | Groq Llama 3.3 70B |
+| `/review <code>` | Correctness check, edge case coverage, refactoring suggestions | Gemini Flash 2.0 |
+| `/visualize <code>` | Mermaid control-flow diagram + variable state trace | Gemini Flash 2.0 |
+
+The hint system is intentionally **progressive** — you can't skip to the answer. Each call unlocks only the next level, preserving the learning value of the struggle.
+
+---
+
+### 🔥 Streaks
+
+Two independent streak systems run in parallel:
+
+- **Activity Streak** — pulled directly from your LeetCode submission calendar
+- **DCC Streak** — tracks consecutive days you completed the *Daily Coding Challenge* specifically
+
+Both are tracked with timezone awareness and visible on your `/profile`. If you solved something on LeetCode but forgot to `/solved` in the bot, the scheduler **auto-logs it** for you so your streak stays intact.
+
+---
+
+### 🏆 Leaderboards & Gamification
+
+| Action | XP | Coins |
+|---|---|---|
+| Link + verify account | +50 | +50 |
+| Win a 1v1 battle | +100 | +20 |
+| Lose a 1v1 battle | +20 | — |
+| Auto-logged streak solve | +15 | +5 |
+
+XP feeds into a **level system** visible on `/profile`. Group leaderboards (`/leaderboard`) rank the top 10 in the current chat; `/gleaderboard` shows the global top 10.
+
+---
+
+### 💬 Conversational Fallback
+
+Don't know where to start? Just message the bot in plain text. It routes your input through a keyword classifier that detects topics like linking, battles, SRS, AI coaching, streaks, and greetings — then responds with contextual guidance and inline buttons pointing to the right commands. Follow-up questions within the same topic are handled using a 5-minute context window stored in Redis.
+
+---
+
+## 📖 Command Reference
+
+### User Commands
+
+| Command | Description |
+|---|---|
+| `/start` | Onboarding & welcome. Supports deep-linked challenge redirects |
+| `/help` | Full interactive help dashboard |
+| `/link <leetcode_username>` | Start account linking — generates a one-time verification code |
+| `/verify` | Scans your LeetCode bio to confirm the code and award 50 XP + 50 coins |
+| `/unlink` | Disconnect your LeetCode account |
+| `/profile` | View level, XP, coins, LeetCode stats, and global rank |
+| `/streak` | Current activity streak from your LeetCode submission calendar |
+| `/dstreak` | Consecutive daily coding challenge streak |
+| `/daily` | Fetch today's LeetCode Daily Coding Challenge |
+| `/random [difficulty] [tag]` | Random free problem matching optional filters |
+| `/contest` | Upcoming contests with live countdowns |
+| `/solved [slug] [quality]` | Log a solved problem and schedule it for SM-2 review |
+| `/hint <slug>` | Unlock the next progressive AI hint for a problem |
+| `/analyze <code>` | Big-O time & space complexity analysis |
+| `/review <code>` | AI code review: correctness, edge cases, optimizations |
+| `/visualize <code>` | Control-flow Mermaid diagram + variable state trace |
+| `/reminders` | Toggle daily challenge, streak warning, and contest alerts |
+| `/leaderboard` | Top 10 in the current group by XP |
+
+---
+
+### Group Commands
+
+| Command | Who | Description |
+|---|---|---|
+| `/gleaderboard` | Everyone | Global top 10 by XP |
+| `/battle @user` | Everyone | Start a direct 1v1 battle with a specific user |
+| `/battle open [difficulty] [tag]` | Everyone | Create an open lobby that anyone can join |
+| `/stopbattle [uuid]` | Participant / Admin | Propose a draw or cancel a battle |
+| `/pausebattle [uuid]` | Participant | Propose to freeze the battle timer |
+| `/resumebattle [uuid]` | Participant | Propose to resume a paused battle |
+| `/myrole` | Everyone | View your security role in this chat |
+| `/config_group <setting> <enable/disable>` | Group Admin | Toggle `battles` or `feed` alerts for the group |
+| `/mute_battle <user> <on/off>` | Group Owner | Mute a member from battle participation |
+| `/clear_group_history` | Group Owner | Reset all leaderboard data for the group |
+
+---
+
+### Coordinator & Admin Commands
+
+| Command | Role Required | Description |
+|---|---|---|
+| `/ping` | Coordinator | Check Telegram API & DB latency |
+| `/stats` | Coordinator | Bot-wide usage statistics |
+| `/pban <user> [reason]` | Coordinator | Globally ban a user from all bot interactions |
+| `/unpban <user>` | Coordinator | Lift a global ban |
+| `/forceverify <user> <leetcode>` | Coordinator | Instantly link and verify an account |
+| `/userinfo <user>` | Coordinator | Full inspection of a user's record |
+| `/activebattles` | Coordinator | List all active and paused battles across all groups |
+| `/setrole <user> <COORDINATOR/USER>` | Super Admin | Promote or demote a user's global role |
+| `/maintenance [on/off]` | Super Admin | Toggle global maintenance mode |
+| `/broadcast <message>` | Super Admin | DM all registered users |
+
+---
+
+## 🏗️ Architecture
+
+The bot runs as a containerized **FastAPI + aiogram** application. All components are on free tiers.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                       Telegram Client                        │
+└────────────────────────────┬─────────────────────────────────┘
+                             │  HTTPS Webhook / Long Poll
+                             ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    aiogram Dispatcher                        │
+│                                                              │
+│   ┌──────────────────────────────────────────────────────┐   │
+│   │                  Middleware Stack                    │   │
+│   │   BanCheck → MaintenanceCheck → GroupMemberSync      │   │
+│   └──────────────────────────┬───────────────────────────┘   │
+│                              │                               │
+│   ┌──────────────────────────▼───────────────────────────┐   │
+│   │               Handler Routers                        │   │
+│   │  common · daily · srs · ai · community · admin       │   │
+│   └──────────────────────────┬───────────────────────────┘   │
+└────────────────────────────┬─┘                               │
+                             │                                 
+┌────────────────────────────▼─────────────────────────────────┐
+│                      Service Layer                           │
+│                                                              │
+│  ┌─────────────────────┐   ┌──────────────────────────────┐  │
+│  │  LeetCodeClient     │   │  AIService                   │  │
+│  │  (GraphQL / httpx)  │   │  (Groq Llama 3.3 + Gemini)   │  │
+│  └─────────────────────┘   └──────────────────────────────┘  │
+│                                                              │
+│  ┌─────────────────────┐   ┌──────────────────────────────┐  │
+│  │  SupabaseDB         │   │  SRSService                  │  │
+│  │  (asyncpg pool)     │   │  (SuperMemo SM-2 engine)     │  │
+│  └─────────────────────┘   └──────────────────────────────┘  │
+│                                                              │
+│  ┌─────────────────────┐                                     │
+│  │  RedisCacheManager  │                                     │
+│  │  (FSM · rate limits │                                     │
+│  │   · role cache)     │                                     │
+│  └─────────────────────┘                                     │
+└──────────────────┬───────────────────────────────────────────┘
+                   │
+       ┌───────────┴──────────────┐
+       │                          │
+┌──────▼──────────────┐  ┌────────▼───────────────────────────┐
+│  Supabase           │  │  APScheduler (Postgres jobstore)   │
+│  · PostgreSQL DB    │  │  · Battle poller       (1 min)     │
+│  · asyncpg pool     │  │  · SRS reminders       (9:00 AM)   │
+│                     │  │  · Streak warnings     (3:00 PM)   │
+│  Upstash Redis      │  │  · Feed & contest poll (5 min)     │
+│  · FSM state        │  │  · Missed job recovery (on boot)   │
+│  · Rate limiter     │  └────────────────────────────────────┘
+│  · Role cache (5m)  │
+└─────────────────────┘
+```
+
+### Stack at a Glance
 
 | Layer | Technology | Purpose |
-|:---|:---|:---|
-| **Language** | ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white) | Core programming language |
-| **Bot Framework** | ![aiogram](https://img.shields.io/badge/aiogram-3.x-f59e0b?logo=telegram&logoColor=white) | High-performance asynchronous Telegram API |
-| **API Server** | ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white) | Webhook updates and monitoring endpoints |
-| **Database** | ![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?logo=supabase&logoColor=white) | PostgreSQL + direct connections via `asyncpg` |
-| **Scheduler** | ![APScheduler](https://img.shields.io/badge/APScheduler-3.x-black) | persistent PG jobstore for cron and battle polling |
-| **Cache & Session** | ![Upstash](https://img.shields.io/badge/Upstash_Redis-DC382D?logo=redis&logoColor=white) | Serverless Redis over TCP for FSM state & rate-limiting |
-| **Primary AI** | ![Groq](https://img.shields.io/badge/Groq_Llama_3.3-f59e0b) | Ultra-fast progressive hints and complexity analyses |
-| **Secondary AI** | ![Gemini](https://img.shields.io/badge/Gemini_2.0_Flash-1A73E8?logo=google-gemini&logoColor=white) | Fallback & deep structural code reviews |
-| **Deployment** | ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white) ![Koyeb](https://img.shields.io/badge/Koyeb-000?logo=koyeb&logoColor=white) | Containerized cloud deployment |
-
-</div>
-
-<br/>
-
-## Architecture
-
-```mermaid
-graph TB
-    subgraph Telegram["Telegram Interface"]
-        User["Telegram User"]
-        BotAPI["Telegram Bot API"]
-    end
-
-    subgraph Backend["Koyeb Container (FastAPI + aiogram)"]
-        main["main.py<br/>(FastAPI Server)"]
-        dp["Dispatcher / Routers<br/>(aiogram 3)"]
-        scheduler["APScheduler<br/>(Async Loop Tasks)"]
-        
-        subgraph services["Service Modules"]
-            lc["LeetCode Client<br/>(httpx + GraphQL)"]
-            db_client["Database Helper<br/>(asyncpg Pool)"]
-            cache["Redis Cache Manager<br/>(redis-py)"]
-            ai["AI Service Manager<br/>(Groq & Gemini)"]
-            srs["SRS SM-2 Engine"]
-        end
-    end
-
-    subgraph Data["Data & State Cloud"]
-        Supabase["Supabase DB<br/>(PostgreSQL)"]
-        Upstash["Upstash Redis<br/>(FSM States & Limits)"]
-    end
-
-    subgraph APIs["AI & External APIs"]
-        LeetCode["LeetCode API<br/>(GraphQL)"]
-        Groq["Groq API<br/>(Llama 3.3)"]
-        Gemini["Gemini API<br/>(Flash 2.0)"]
-    end
-
-    User -->|Sends commands| BotAPI
-    BotAPI -->|Webhooks / Polling| main
-    main --> dp
-    dp --> services
-    scheduler -->|Poll Active Battles| lc
-    scheduler -->|Daily Check due SRS| db_client
-    
-    lc --> LeetCode
-    db_client --> Supabase
-    cache --> Upstash
-    ai --> Groq
-    ai --> Gemini
-    srs --> db_client
-
-    style Backend fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff
-    style Data fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#d1fae5
-    style APIs fill:#1e3a5f,stroke:#38bdf8,stroke-width:2px,color:#e0f2fe
-```
-
-<br/>
-
-## Quick Start
-
-### Prerequisites
-* **Python** `>= 3.11`
-* **Git** installed
-* **Supabase** & **Upstash Redis** accounts
-
-### 1. Clone the Repository
-```bash
-git clone https://github.com/Charicific/memoize-tgbot.git
-cd memoize-tgbot
-```
-
-### 2. Configure Database Schema
-Paste and run the SQL code in [database/schema.sql](database/schema.sql) using your Supabase SQL Editor. We recommend selecting **Run and enable RLS** for baseline table security.
-
-### 3. Configure Environment Variables
-Create a `.env` file in the project root:
-```env
-TELEGRAM_BOT_TOKEN=your-telegram-bot-token
-
-SUPABASE_URL=https://your-ref-id.supabase.co
-SUPABASE_KEY=your-supabase-anon-key
-SUPABASE_DB_URL=postgresql+asyncpg://postgres:your-db-password@db.your-ref-id.supabase.co:5432/postgres
-
-REDIS_URL=rediss://default:your-password@your-upstash-endpoint.upstash.io:6379
-
-GROQ_API_KEY=your-groq-api-key
-GEMINI_API_KEY=your-gemini-api-key
-
-PORT=8000
-```
-> **Tip:** Keep the `WEBHOOK_URL` commented out or omitted in local `.env` files to force the bot into **Long Polling** mode for easy offline testing.
-
-### 4. Setup Local Environment & Run
-```bash
-# Create and activate virtual environment
-python -m venv .venv
-.venv\Scripts\activate      # Windows Powershell
-source .venv/bin/activate  # macOS/Linux
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run integration tests
-python tests/test_leetcode.py
-
-# Start the application
-python -m src.main
-```
-
-### 5. Deployment Command
-The application is pre-configured with a [Dockerfile](Dockerfile) and [Procfile](Procfile) for deployment to Koyeb or Heroku. In production, configure `WEBHOOK_URL` in the environment settings to enable high-efficiency Telegram webhooks.
+|---|---|---|
+| Bot Framework | [aiogram 3](https://docs.aiogram.dev/) | Async Telegram bot framework |
+| Web Server | FastAPI + Uvicorn | Webhook endpoint & health check |
+| Database | Supabase (PostgreSQL) | Persistent storage via asyncpg |
+| Cache & FSM | Upstash Redis | Bot state, rate limits, role cache |
+| LeetCode Data | LeetCode GraphQL API | Problem fetch, submission polling |
+| AI — Hints & Analysis | Groq (Llama 3.3 70B) | Fast inference for hints & complexity |
+| AI — Review & Visualize | Gemini Flash 2.0 | Deep code review and flowcharts |
+| Background Jobs | APScheduler | Cron-style persistent scheduled tasks |
+| Deployment | Koyeb (Docker) | Containerized cloud hosting |
 
 ---
 
-## Project Structure
+## ⏱️ Background Jobs
+
+Five scheduled tasks run concurrently via `APScheduler`. Job state persists in Supabase PostgreSQL so no jobs are lost on container restart.
+
+| Job | Frequency | What it does |
+|---|---|---|
+| `poll_active_battles` | Every 1 min | Polls LeetCode submissions for active battles. Detects solves, crowns a winner, distributes XP/coins, and expires timed-out battles. |
+| `check_srs_reviews` | Daily at 9:00 AM | Finds users with SM-2 review items due today and sends reminder DMs. Skips users already notified today (Redis dedup). |
+| `check_streak_reminders` | Daily at 3:00 PM UTC | Checks LeetCode submission calendars. Auto-logs today's solve if found on LeetCode but not in the bot (+15 XP, +5 coins). Sends a streak warning DM if no solve is detected. |
+| `poll_leetcode_feed` | Every 5 min | Scrapes the daily challenge and upcoming contests. Broadcasts daily challenge cards to all feed-enabled groups. Fires contest alerts at registration, 12h, 5min, and 10min-after checkpoints. |
+| `check_missed_jobs` | Once on boot | Compares current time against daily job milestones. Immediately triggers any cron job the bot missed while it was offline. |
+
+---
+
+## 🗄️ Database Schema
+
+11 tables covering users, account links, battle sessions, spaced repetition state, group memberships, group settings, and daily challenge history.
+
+Full definitions: [`database/schema.sql`](database/schema.sql)
+
+### Key Tables
+
+| Table | Purpose |
+|---|---|
+| `users` | XP, level, coins, global role, ban status, notification preferences |
+| `linked_accounts` | Telegram ↔ LeetCode username mapping with verification flow state |
+| `battles` | 1v1 battle state machine (`PENDING → ACTIVE → COMPLETED / EXPIRED / CANCELLED`) |
+| `group_battles` | Multiplayer open-lobby battle sessions |
+| `group_battle_participants` | Per-participant join time, solve timestamp, and solve duration |
+| `srs_reviews` | SM-2 parameters per problem: ease factor, interval, repetitions, next review date |
+| `problem_history` | Solve log used for streak calculation and auto-solve detection |
+| `group_members` | Tracks which users belong to which groups (feeds leaderboards) |
+| `group_settings` | Per-group toggles: `battles` and `feed` enabled/disabled |
+| `group_battle_mutes` | Users muted from battle participation by a group owner |
+| `daily_challenges` | Historical daily challenge log (date → problem slug) for DCC streak tracking |
+
+### SM-2 Parameters Explained
+
+| Field | Meaning |
+|---|---|
+| `ease_factor` | How easily you recall this problem (starts at 2.5, floor at 1.3) |
+| `interval` | Days until next review — grows exponentially with each successful recall |
+| `repetitions` | Number of consecutive successful reviews (resets to 0 on low recall) |
+| `next_review_date` | Timestamp for the next scheduled reminder DM |
+
+---
+
+## 🔐 Role Hierarchy
+
+```
+SUPER_ADMIN  ──►  COORDINATOR  ──►  GROUP_OWNER  ──►  GROUP_ADMIN  ──►  USER
+```
+
+| Role | Storage | Capabilities |
+|---|---|---|
+| `USER` | Default | Full access to practice features, AI coaching, and personal stats |
+| `GROUP_ADMIN` | Resolved via Telegram API | Configure group settings (`/config_group`) |
+| `GROUP_OWNER` | Resolved via Telegram API | Mute battle participants, reset group history |
+| `COORDINATOR` | Stored in DB (`users.role`) | Moderation, inspection, global ban/unban |
+| `SUPER_ADMIN` | Defined in `.env` | Full system control: broadcast, maintenance mode, role assignment |
+
+> **Caching:** Resolved roles are cached in Redis for **5 minutes**. A `/setrole` change immediately invalidates all cached role entries for that user across every group.
+
+---
+
+## 📁 Project Structure
 
 ```
 memoize-tgbot/
 │
 ├── database/
-│   └── schema.sql                  # PostgreSQL schemas & tables
+│   └── schema.sql                   # Full PostgreSQL schema (11 tables)
 │
 ├── src/
-│   ├── config.py                   # App config loading settings from .env
-│   ├── main.py                     # App Server startup (FastAPI + aiogram)
+│   ├── config.py                    # Pydantic Settings — loads & validates all env vars
+│   ├── main.py                      # Bot startup, webhook/polling, FastAPI health endpoint
 │   │
-│   ├── handlers/                   # Telegram command Handlers
-│   │   ├── __init__.py             #   └── Router registrations
-│   │   ├── common.py               #   └── /start, /help, /link, /verify, /profile, /reminders, /myrole
-│   │   ├── daily.py                #   └── /daily, /contest, /random
-│   │   ├── srs.py                  #   └── /solved grading & callback flows
-│   │   ├── ai.py                   #   └── /hint, /analyze, /review
-│   │   ├── community.py            #   └── /leaderboard, /gleaderboard, /battle, /stopbattle, /pausebattle, /resumebattle
-│   │   ├── admin.py                #   └── /setrole, /maintenance, /broadcast, /pban, /unpban, /forceverify, /userinfo, /activebattles
-│   │   └── streaks.py              #   └── /streak, /dstreak
+│   ├── handlers/                    # aiogram routers — one module per feature domain
+│   │   ├── admin.py                 # Coordinator & Super Admin commands
+│   │   ├── ai.py                    # /hint, /analyze, /review, /visualize
+│   │   ├── chat.py                  # Conversational fallback & keyword-based routing
+│   │   ├── common.py                # /start, /link, /verify, /profile, /reminders
+│   │   ├── community.py             # /battle, /leaderboard, group controls
+│   │   ├── daily.py                 # /daily, /random, /contest
+│   │   ├── srs.py                   # /solved, spaced repetition logging & grading
+│   │   ├── streaks.py               # /streak, /dstreak — submission calendar parsing
+│   │   └── visualize.py             # Mermaid diagram generation & variable trace
 │   │
-│   ├── middlewares/                # Custom aiogram middlewares
-│   │   ├── ban_middleware.py       #   └── Banned user request interceptor
-│   │   └── maintenance_middleware.py#  └── Maintenance mode request blocker
+│   ├── middlewares/
+│   │   ├── ban_middleware.py         # Blocks banned users before any handler runs
+│   │   └── maintenance_middleware.py # Short-circuits all non-admin handlers in maintenance mode
 │   │
-│   ├── services/                   # Business logic and external clients
-│   │   ├── __init__.py
-│   │   ├── leetcode.py             #   └── LeetCode GraphQL custom API calls
-│   │   ├── supabase_db.py          #   └── Supabase direct queries via asyncpg pool
-│   │   ├── redis_cache.py          #   └── Upstash cache operations & FSM storage
-│   │   ├── ai_service.py           #   └── Groq & Gemini Flash API client logic
-│   │   └── srs_service.py          #   └── SM-2 spaced repetition calculator
+│   ├── services/                    # Core business logic & external integrations
+│   │   ├── leetcode.py              # LeetCode GraphQL client (httpx, async)
+│   │   ├── supabase_db.py           # asyncpg connection pool wrapper & all DB queries
+│   │   ├── redis_cache.py           # Cache manager: FSM, rate limits, role cache
+│   │   ├── ai_service.py            # Groq + Gemini API integrations
+│   │   └── srs_service.py           # SuperMemo SM-2 algorithm implementation
 │   │
-│   └── utils/                      # Helper utilities
-│       ├── formatters.py           #   └── HTML descriptions parser & cleaning
-│       ├── logging_helper.py       #   └── Administrative activity log channel sender
-│       └── roles.py                #   └── User security roles resolution
+│   └── utils/
+│       ├── formatters.py            # HTML parser, markdown cleaner, content sanitization
+│       ├── logging_helper.py        # Sends structured audit logs to a Telegram log channel
+│       └── roles.py                 # Role resolution logic with Redis caching
 │
 ├── tests/
-│   └── test_leetcode.py            # Integration query testing scripts
+│   ├── test_leetcode_mock.py        # Offline unit tests with mocked HTTP responses
+│   └── test_leetcode.py             # Live integration tests against LeetCode's API
 │
-├── .gitignore                      # Git ignored files (prevents .env commits)
-├── Dockerfile                      # Production Docker container profile
-├── Procfile                        # Startup script command
-├── requirements.txt                # Package dependencies manifest
-└── runtime.txt                     # Target python version
+├── Dockerfile                       # Multi-stage Python Docker build
+├── Procfile                         # Koyeb / Heroku process definition
+├── requirements.txt
+└── runtime.txt                      # python-3.11.x
 ```
 
 ---
 
-## License
+## 🚀 Local Setup
 
-This project is licensed under a proprietary license. All rights reserved. No part of this codebase may be used, copied, modified, or distributed without explicit written permission from the copyright owner — see the [LICENSE](LICENSE) file for details.
+### Prerequisites
 
-<br/>
+| Service | What you need | Link |
+|---|---|---|
+| Python | 3.11 or higher | [python.org](https://python.org) |
+| Telegram | Bot token from BotFather | [@BotFather](https://t.me/BotFather) |
+| Supabase | Project URL + anon key + DB URL | [supabase.com](https://supabase.com) |
+| Upstash | Redis connection URL | [upstash.com](https://upstash.com) |
+| Groq | API key (free tier) | [console.groq.com](https://console.groq.com) |
+| Gemini | API key (free tier) | [aistudio.google.com](https://aistudio.google.com) |
+
+---
+
+### Step-by-Step
+
+**1. Clone the repository**
+```bash
+git clone https://github.com/Charicific/memoize-tgbot.git
+cd memoize-tgbot
+```
+
+**2. Create and activate a virtual environment**
+```bash
+python -m venv .venv
+
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+# Windows (Command Prompt)
+.venv\Scripts\activate.bat
+
+# macOS / Linux
+source .venv/bin/activate
+```
+
+**3. Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+**4. Configure environment variables**
+
+Copy the template below into a `.env` file at the project root:
+
+```env
+# ─── Telegram ────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN=your_bot_token_from_botfather
+
+# ─── Supabase ────────────────────────────────────────────────
+SUPABASE_URL=https://your_ref.supabase.co
+SUPABASE_KEY=your_anon_key
+SUPABASE_DB_URL=postgresql+asyncpg://postgres:your_password@db.your_ref.supabase.co:5432/postgres
+
+# ─── Upstash Redis ───────────────────────────────────────────
+REDIS_URL=rediss://default:your_password@your_endpoint.upstash.io:6379
+
+# ─── AI Keys ─────────────────────────────────────────────────
+GROQ_API_KEY=your_groq_api_key
+GEMINI_API_KEY=your_gemini_api_key
+
+# ─── Server ──────────────────────────────────────────────────
+PORT=8000
+
+# ─── Optional: Webhook (omit to use long-polling mode) ───────
+# WEBHOOK_URL=https://your-app.koyeb.app
+
+# ─── Optional: Admin Configuration ──────────────────────────
+# SUPER_ADMIN_IDS=123456789,987654321
+# LOG_CHANNEL_ID=-100xxxxxxxxxx
+```
+
+> **Tip:** Omitting `WEBHOOK_URL` automatically switches the bot to **long-polling mode** — no public URL or ngrok tunnel needed for local development.
+
+**5. Apply the database schema**
+
+Open the [Supabase SQL Editor](https://supabase.com/dashboard), select your project, and run the contents of [`database/schema.sql`](database/schema.sql).
+
+**6. Start the bot**
+```bash
+python -m src.main
+```
+
+The bot should appear online in your Telegram client within a few seconds.
+
+---
+
+## 🔑 Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
+| `SUPABASE_URL` | ✅ | Your Supabase project REST URL |
+| `SUPABASE_KEY` | ✅ | Supabase anon / service-role key |
+| `SUPABASE_DB_URL` | ✅ | `postgresql+asyncpg://...` direct connection string |
+| `REDIS_URL` | ✅ | Upstash Redis `rediss://` URL |
+| `GROQ_API_KEY` | ✅ | Groq API key for Llama 3.3 70B inference |
+| `GEMINI_API_KEY` | ✅ | Google Gemini Flash 2.0 API key |
+| `PORT` | ✅ | Port for Uvicorn / FastAPI (default: `8000`) |
+| `WEBHOOK_URL` | ⚙️ Optional | Public HTTPS URL; omit to use long-polling mode |
+| `SUPER_ADMIN_IDS` | ⚙️ Optional | Comma-separated Telegram user IDs with super admin access |
+| `LOG_CHANNEL_ID` | ⚙️ Optional | Telegram channel ID for admin audit logs |
+
+---
+
+## 🧪 Testing
+
+The test suite is split into two layers:
+
+### Offline Mock Tests *(no API keys required)*
+
+```bash
+pytest tests/test_leetcode_mock.py -v
+```
+
+Uses mocked HTTP responses to validate LeetCode client logic without hitting any external API.
+
+### Live Integration Tests *(requires internet; hits the real LeetCode GraphQL API)*
+
+```bash
+# Windows (PowerShell)
+$env:PYTHONIOENCODING = "utf-8"
+python tests/test_leetcode.py
+
+# macOS / Linux
+PYTHONIOENCODING=utf-8 python tests/test_leetcode.py
+```
+
+> The `PYTHONIOENCODING` flag prevents Unicode console errors on Windows when printing problem titles with non-ASCII characters.
+
+---
+
+## 🐳 Production Deployment
+
+The project is Docker-ready and configured for **[Koyeb](https://koyeb.com)** (recommended) or any Docker-compatible platform.
+
+### Koyeb (Recommended)
+
+1. **Push your repo to GitHub** and connect it to Koyeb via the dashboard.
+2. **Set all environment variables** in Koyeb's environment config, adding:
+   ```
+   WEBHOOK_URL=https://your-app-name.koyeb.app
+   ```
+   With `WEBHOOK_URL` set, the bot switches from polling to **webhook mode** automatically.
+3. Koyeb auto-detects the `Dockerfile` / `Procfile` and starts Uvicorn — no extra config needed.
+4. **Keep the container warm** by pointing a free [UptimeRobot](https://uptimerobot.com) monitor at:
+   ```
+   https://your-app-name.koyeb.app/health
+   ```
+
+### Manual Docker
+
+```bash
+docker build -t memoize-tgbot .
+docker run --env-file .env -p 8000:8000 memoize-tgbot
+```
+
+### Health Check
+
+The FastAPI server exposes `/health`, used for uptime monitoring and deployment readiness:
+
+```json
+{ "status": "ok", "telegram": "reachable", "db": "reachable" }
+```
+
+---
+
+## 💰 Infrastructure Cost
+
+> **Total: ₹0/month.** Every component runs on a free tier.
+
+| Service | What it provides | Free tier limit | Cost |
+|---|---|---|---|
+| [Koyeb](https://koyeb.com) | Container hosting | 1 free instance | **₹0** |
+| [Supabase](https://supabase.com) | PostgreSQL + connection pooling | 500 MB storage, 2 GB transfer | **₹0** |
+| [Upstash](https://upstash.com) | Redis (FSM + rate limits + cache) | 10K requests/day | **₹0** |
+| [Groq](https://console.groq.com) | Llama 3.3 70B inference | Rate-limited free tier | **₹0** |
+| [Gemini](https://aistudio.google.com) | Flash 2.0 inference | Rate-limited free tier | **₹0** |
+| [UptimeRobot](https://uptimerobot.com) | Uptime monitoring | 50 monitors | **₹0** |
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Here's how to get started:
+
+1. **Fork** the repository
+2. **Create a feature branch**: `git checkout -b feat/your-feature-name`
+3. **Commit your changes**: `git commit -m 'feat: add your feature'`
+4. **Push the branch**: `git push origin feat/your-feature-name`
+5. **Open a Pull Request** — describe what you changed and why
+
+### Good First Issues
+
+- Add new LeetCode GraphQL query fields to [`leetcode.py`](src/services/leetcode.py) (e.g. contest rating history)
+- Improve AI prompt templates in [`ai_service.py`](src/services/ai_service.py) for better hint quality
+- Expand `/profile` to display SM-2 statistics (total reviews, retention rate, due count)
+- Write additional mock unit tests for the SRS and battle service logic
+- Add difficulty breakdown (Easy / Medium / Hard counts) to the `/stats` admin command
+
+Found a bug? [Open an issue](https://github.com/Charicific/memoize-tgbot/issues) with steps to reproduce.
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** — see [`LICENSE`](LICENSE) for full details.
 
 ---
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=110&section=footer" width="100%" />
+Built with `asyncio` and too many LeetCode problems.
 
-**Built with idea for developers prepping DSA**
+**[Try Memoize on Telegram →](https://t.me/MemoizeLC_bot?start)**
+
+<br/>
+
+*If Memoize helped you crack a hard problem or land an offer, drop a ⭐ on the repo!*
 
 </div>
