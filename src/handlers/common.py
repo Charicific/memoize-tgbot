@@ -3,6 +3,7 @@ import logging
 import time
 from html import escape as html_escape
 from aiogram import Router, html, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, ChatMemberUpdated, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -551,7 +552,10 @@ async def process_toggle_reminder(callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     
     if action == "close":
-        await callback_query.message.edit_text("✅ Reminder settings saved successfully!")
+        try:
+            await callback_query.message.edit_text("✅ Reminder settings saved successfully!")
+        except TelegramBadRequest:
+            pass  # Already closed / double-tap — safe to ignore
         await callback_query.answer("Settings saved.")
         return
 
@@ -605,8 +609,8 @@ async def process_toggle_reminder(callback_query: CallbackQuery):
     
     try:
         await callback_query.message.edit_text(response, reply_markup=keyboard, parse_mode="HTML")
-    except Exception:
-        pass
+    except TelegramBadRequest:
+        pass  # Message not modified (double-tap) — safe to ignore
         
     status_str = "Enabled" if new_val else "Disabled"
     await callback_query.answer(f"{action.capitalize()} reminders {status_str.lower()}!")
