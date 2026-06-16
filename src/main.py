@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, html, types, BaseMiddleware
+from aiogram.exceptions import TelegramBadRequest
 
 from aiogram.types import ErrorEvent, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.redis import RedisStorage
@@ -1117,6 +1118,13 @@ async def poll_leetcode_feed():
 async def global_error_handler(event: ErrorEvent):
     exception = event.exception
     update = event.update
+
+    # Silently ignore "message is not modified" — harmless double-taps on inline
+    # buttons where the content is identical to what's already rendered.
+    if isinstance(exception, TelegramBadRequest) and "message is not modified" in str(exception):
+        logger.debug(f"Suppressed harmless 'message not modified' error from update {event.update.update_id}")
+        return
+
     logger.error(f"Unhandled exception in bot: {exception}", exc_info=exception)
 
     # Extract update context

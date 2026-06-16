@@ -2,7 +2,6 @@ import random
 import logging
 import datetime
 from aiogram import Router, html, F
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from src.services.leetcode import LeetCodeClient
@@ -213,10 +212,8 @@ async def process_view_daily_desc(callback_query: CallbackQuery):
     try:
         await callback_query.message.edit_text(response, parse_mode="HTML", disable_web_page_preview=True)
         await callback_query.answer()
-    except TelegramBadRequest as e:
-        if "message is not modified" in str(e):
-            await callback_query.answer()  # double-tap — safe to ignore
-        else:
-            logger.error(f"Error editing daily challenge description: {e}")
-            await callback_query.answer("Failed to display description.")
+    except Exception as e:
+        logger.error(f"Error editing daily challenge DM reminder description: {e}")
+        await callback_query.answer("Failed to display description.")
+
 
