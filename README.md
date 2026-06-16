@@ -1,39 +1,31 @@
-<div align="center">
-
-<img src="assets/Memoize.png" alt="Memoize Bot Icon" width="160" />
-
-<br/>
+<table>
+<tr>
+<td width="200" valign="middle" align="center">
+<img src="assets/Memoize.png" alt="Memoize Bot Icon" width="180" />
+</td>
+<td valign="middle">
 
 # Memoize
 
 **Transform your LeetCode grind into something you actually look forward to.**
 
-<br/>
-
 [![Try on Telegram](https://img.shields.io/badge/Try%20Memoize-@MemoizeLC__bot-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/MemoizeLC_bot?start)
-&nbsp;
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-&nbsp;
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-009688?style=for-the-badge&logo=telegram&logoColor=white)](https://docs.aiogram.dev/)
-&nbsp;
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
-&nbsp;
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
-
-<br/>
 
 [![Infrastructure Cost](https://img.shields.io/badge/Infrastructure%20Cost-₹0%2Fmonth-brightgreen?style=flat-square)](https://koyeb.com)
 [![Deployment](https://img.shields.io/badge/Deployed%20on-Koyeb-blueviolet?style=flat-square&logo=docker)](https://koyeb.com)
 [![AI Powered](https://img.shields.io/badge/AI-Groq%20%2B%20Gemini-orange?style=flat-square)](https://console.groq.com)
 [![Spaced Repetition](https://img.shields.io/badge/Algorithm-SM--2%20Spaced%20Repetition-critical?style=flat-square)](https://supermemo.guru/wiki/SM-2)
 
-<br/>
-
 > **Daily Challenges · 1v1 Battles · AI Coaching · Spaced Repetition · Streaks · Leaderboards**
->
 > No new apps. No extra tabs. Just Telegram.
 
-</div>
+</td>
+</tr>
+</table>
 
 ---
 
@@ -57,7 +49,7 @@
 
 ---
 
-## 🧠 What is Memoize?
+## What is Memoize?
 
 Memoize is a **Telegram-native LeetCode companion** that meets you where you already are — no extra apps, no browser tabs, no context-switching. It wraps the full DSA practice loop into a single bot:
 
@@ -73,9 +65,9 @@ Memoize is a **Telegram-native LeetCode companion** that meets you where you alr
 
 ---
 
-## ✨ Feature Overview
+## Feature Overview
 
-### 📅 Daily Challenges & Contest Alerts
+### Daily Challenges & Contest Alerts
 
 The bot automatically delivers **LeetCode's Daily Coding Challenge** to your groups and DMs every morning — complete with difficulty badge, topic tags, and formatted problem description. Contest alerts fire at four checkpoints:
 
@@ -86,7 +78,7 @@ The bot automatically delivers **LeetCode's Daily Coding Challenge** to your gro
 
 ---
 
-### ⚔️ 1v1 & Group Battles
+### 1v1 & Group Battles
 
 Challenge any linked user to a **timed coding duel**. The bot polls both players' LeetCode submission histories every minute to verify who solved the battle problem first — no screenshots, no honor system, no disputes.
 
@@ -103,7 +95,7 @@ Participants can propose a **draw** (`/stopbattle`), **pause** (`/pausebattle`),
 
 ---
 
-### 🔁 Spaced Repetition (SM-2)
+### Spaced Repetition (SM-2)
 
 Every problem you log via `/solved` is scheduled for review using the **SuperMemo SM-2 algorithm** — the same science behind Anki.
 
@@ -118,7 +110,7 @@ This turns your solve log into a **long-term memory system**, not just a history
 
 ---
 
-### 🤖 AI Coaching
+### AI Coaching
 
 Four distinct AI commands powered by **Groq (Llama 3.3 70B)** and **Gemini Flash 2.0**:
 
@@ -133,7 +125,7 @@ The hint system is intentionally **progressive** — you can't skip to the answe
 
 ---
 
-### 🔥 Streaks
+### Streaks
 
 Two independent streak systems run in parallel:
 
@@ -144,7 +136,7 @@ Both are tracked with timezone awareness and visible on your `/profile`. If you 
 
 ---
 
-### 🏆 Leaderboards & Gamification
+### Leaderboards & Gamification
 
 | Action | XP | Coins |
 |---|---|---|
@@ -157,13 +149,13 @@ XP feeds into a **level system** visible on `/profile`. Group leaderboards (`/le
 
 ---
 
-### 💬 Conversational Fallback
+### Conversational Fallback
 
 Don't know where to start? Just message the bot in plain text. It routes your input through a keyword classifier that detects topics like linking, battles, SRS, AI coaching, streaks, and greetings — then responds with contextual guidance and inline buttons pointing to the right commands. Follow-up questions within the same topic are handled using a 5-minute context window stored in Redis.
 
 ---
 
-## 📖 Command Reference
+## Command Reference
 
 ### User Commands
 
@@ -224,7 +216,7 @@ Don't know where to start? Just message the bot in plain text. It routes your in
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 The bot runs as a containerized **FastAPI + aiogram** application. All components are on free tiers.
 
@@ -246,7 +238,7 @@ The bot runs as a containerized **FastAPI + aiogram** application. All component
 │   │               Handler Routers                        │   │
 │   │  common · daily · srs · ai · community · admin       │   │
 │   └──────────────────────────┬───────────────────────────┘   │
-└────────────────────────────┬─┘                               │
+└────────────────────────────┬─┘───────────────────────────────┘
                              │                                 
 ┌────────────────────────────▼─────────────────────────────────┐
 │                      Service Layer                           │
@@ -298,7 +290,7 @@ The bot runs as a containerized **FastAPI + aiogram** application. All component
 
 ---
 
-## ⏱️ Background Jobs
+## Background Jobs
 
 Five scheduled tasks run concurrently via `APScheduler`. Job state persists in Supabase PostgreSQL so no jobs are lost on container restart.
 
@@ -312,7 +304,7 @@ Five scheduled tasks run concurrently via `APScheduler`. Job state persists in S
 
 ---
 
-## 🗄️ Database Schema
+## Database Schema
 
 11 tables covering users, account links, battle sessions, spaced repetition state, group memberships, group settings, and daily challenge history.
 
@@ -345,7 +337,7 @@ Full definitions: [`database/schema.sql`](database/schema.sql)
 
 ---
 
-## 🔐 Role Hierarchy
+## Role Hierarchy
 
 ```
 SUPER_ADMIN  ──►  COORDINATOR  ──►  GROUP_OWNER  ──►  GROUP_ADMIN  ──►  USER
@@ -363,7 +355,7 @@ SUPER_ADMIN  ──►  COORDINATOR  ──►  GROUP_OWNER  ──►  GROUP_AD
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 memoize-tgbot/
@@ -414,7 +406,7 @@ memoize-tgbot/
 
 ---
 
-## 🚀 Local Setup
+## Local Setup
 
 ### Prerequisites
 
@@ -502,25 +494,25 @@ The bot should appear online in your Telegram client within a few seconds.
 
 ---
 
-## 🔑 Environment Variables
+## Environment Variables
 
-| Variable | Required | Description |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
-| `SUPABASE_URL` | ✅ | Your Supabase project REST URL |
-| `SUPABASE_KEY` | ✅ | Supabase anon / service-role key |
-| `SUPABASE_DB_URL` | ✅ | `postgresql+asyncpg://...` direct connection string |
-| `REDIS_URL` | ✅ | Upstash Redis `rediss://` URL |
-| `GROQ_API_KEY` | ✅ | Groq API key for Llama 3.3 70B inference |
-| `GEMINI_API_KEY` | ✅ | Google Gemini Flash 2.0 API key |
-| `PORT` | ✅ | Port for Uvicorn / FastAPI (default: `8000`) |
-| `WEBHOOK_URL` | ⚙️ Optional | Public HTTPS URL; omit to use long-polling mode |
-| `SUPER_ADMIN_IDS` | ⚙️ Optional | Comma-separated Telegram user IDs with super admin access |
-| `LOG_CHANNEL_ID` | ⚙️ Optional | Telegram channel ID for admin audit logs |
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather) |
+| `SUPABASE_URL` | Your Supabase project REST URL |
+| `SUPABASE_KEY` | Supabase anon / service-role key |
+| `SUPABASE_DB_URL` | `postgresql+asyncpg://...` direct connection string |
+| `REDIS_URL` | Upstash Redis `rediss://` URL |
+| `GROQ_API_KEY` | Groq API key for Llama 3.3 70B inference |
+| `GEMINI_API_KEY` | Google Gemini Flash 2.0 API key |
+| `PORT` | Port for Uvicorn / FastAPI (default: `8000`) |
+| `WEBHOOK_URL` | Public HTTPS URL; omit to use long-polling mode |
+| `SUPER_ADMIN_IDS` | Comma-separated Telegram user IDs with super admin access |
+| `LOG_CHANNEL_ID` | Telegram channel ID for admin audit logs |
 
 ---
 
-## 🧪 Testing
+## Testing
 
 The test suite is split into two layers:
 
@@ -547,7 +539,7 @@ PYTHONIOENCODING=utf-8 python tests/test_leetcode.py
 
 ---
 
-## 🐳 Production Deployment
+## Production Deployment
 
 The project is Docker-ready and configured for **[Koyeb](https://koyeb.com)** (recommended) or any Docker-compatible platform.
 
@@ -582,7 +574,7 @@ The FastAPI server exposes `/health`, used for uptime monitoring and deployment 
 
 ---
 
-## 💰 Infrastructure Cost
+## Infrastructure Cost
 
 > **Total: ₹0/month.** Every component runs on a free tier.
 
@@ -597,7 +589,7 @@ The FastAPI server exposes `/health`, used for uptime monitoring and deployment 
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Here's how to get started:
 
@@ -619,7 +611,7 @@ Found a bug? [Open an issue](https://github.com/Charicific/memoize-tgbot/issues)
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the **MIT License** — see [`LICENSE`](LICENSE) for full details.
 
