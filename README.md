@@ -173,12 +173,17 @@ Don't know where to start? Just message the bot in plain text. It routes your in
 | `/random [difficulty] [tag]` | Random free problem matching optional filters |
 | `/contest` | Upcoming contests with live countdowns |
 | `/solved [slug] [quality]` | Log a solved problem and schedule it for SM-2 review |
+| `/solve <query>` | Look up details and direct solve links for any LeetCode problem |
+| `/reviews` | View your active Spaced Repetition (SRS) queue and master due items |
+| `/rm_srs <query>` | Remove a problem from your active Spaced Repetition queue |
 | `/hint <slug>` | Unlock the next progressive AI hint for a problem |
 | `/analyze <code>` | Big-O time & space complexity analysis |
 | `/review <code>` | AI code review: correctness, edge cases, optimizations |
 | `/visualize <code>` | Control-flow Mermaid diagram + variable state trace |
 | `/reminders` | Toggle daily challenge, streak warning, and contest alerts |
 | `/leaderboard` | Top 10 in the current group by XP |
+
+> 💡 **Tip:** You can use a dot `.` prefix instead of a slash `/` for all commands (e.g. `.ping`, `.daily`, or `.solved 1 4` work identically to their slash equivalents).
 
 ---
 
@@ -212,7 +217,10 @@ Don't know where to start? Just message the bot in plain text. It routes your in
 | `/activebattles` | Coordinator | List all active and paused battles across all groups |
 | `/setrole <user> <COORDINATOR/USER>` | Super Admin | Promote or demote a user's global role |
 | `/maintenance [on/off]` | Super Admin | Toggle global maintenance mode |
-| `/broadcast <message>` | Super Admin | DM all registered users |
+| `/pbroadcast <message>` | Super Admin | Broadcast message to all users in private DMs |
+| `/gbroadcast <message>` | Super Admin | Broadcast message to all active groups |
+| `/cbroadcast <message>` | Super Admin | Broadcast message to all tracked channels |
+| `/broadcast <message>` | Super Admin | Broadcast message universally to private DMs, groups, and channels |
 
 ---
 
@@ -306,7 +314,7 @@ Five scheduled tasks run concurrently via `APScheduler`. Job state persists in S
 
 ## Database Schema
 
-11 tables covering users, account links, battle sessions, spaced repetition state, group memberships, group settings, and daily challenge history.
+12 tables covering users, account links, battle sessions, spaced repetition state, group memberships, group settings, daily challenge history, and bot channels tracking.
 
 Full definitions: [`database/schema.sql`](database/schema.sql)
 
@@ -325,6 +333,7 @@ Full definitions: [`database/schema.sql`](database/schema.sql)
 | `group_settings` | Per-group toggles: `battles` and `feed` enabled/disabled |
 | `group_battle_mutes` | Users muted from battle participation by a group owner |
 | `daily_challenges` | Historical daily challenge log (date → problem slug) for DCC streak tracking |
+| `bot_channels` | Tracks Telegram channels the bot is active in (for broadcasts) |
 
 ### SM-2 Parameters Explained
 

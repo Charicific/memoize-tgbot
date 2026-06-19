@@ -54,6 +54,16 @@ These commands log your practice problems and schedule reviews to reinforce lear
 *   `/solved [slug] [quality]`
     *   **Arguments:** Optional problem slug and recall score (0 to 5).
     *   **Explanation:** Logs a solved problem to the Spaced Repetition system. If arguments are omitted, it displays an interactive list of your latest 5 accepted LeetCode submissions. Selecting a problem lets you grade your recall (from 0 - Forgot to 5 - Perfect), which calculates your next review date using the SuperMemo SM-2 algorithm.
+    *   **Note:** The system filters out problems you haven't solved yet. If you try to log a problem you haven't solved on LeetCode (not in your database history or not in your last 20 accepted submissions), you will receive a warning telling you to re-submit on LeetCode first.
+*   `/solve <query>`
+    *   **Arguments:** Problem ID, slug, or title (e.g. `1`, `two-sum`, `two sum`).
+    *   **Explanation:** Looks up details for any LeetCode problem, presenting difficulty, tags, a clean description snippet, and direct buttons to solve on LeetCode. Displays up to 5 suggestion buttons if the query is ambiguous.
+*   `/reviews`
+    *   **Arguments:** None.
+    *   **Explanation:** Displays your active Spaced Repetition reviews queue (split into Due and Upcoming items) and provides inline buttons to instantly master and archive due items.
+*   `/rm_srs <query>`
+    *   **Arguments:** Problem ID, slug, or title.
+    *   **Explanation:** Removes a problem from your active Spaced Repetition reviews queue. Displays up to 5 choice buttons if ambiguous.
 
 ---
 
@@ -149,7 +159,7 @@ Diagnostic and monitoring tools for system coordinators.
     *   **Explanation:** Measures the bot's API response time, database query latency, and total uptime from the last restart. Requires `COORDINATOR` or higher.
 *   `/stats`
     *   **Arguments:** None.
-    *   **Explanation:** Displays global system usage statistics (registered users, verified users, active/completed battles, and SRS items). Requires `COORDINATOR` or higher.
+    *   **Explanation:** Displays global system usage statistics (registered users, linked/verified counts, active/completed battles, active SRS reviews, community counts of active groups and member channels, and count of distinct users with reminders enabled). Requires `COORDINATOR` or higher.
 *   `/activebattles`
     *   **Arguments:** None.
     *   **Explanation:** Lists all active and paused battles currently running in the database. Requires `COORDINATOR` or higher.
@@ -183,9 +193,18 @@ Global deployment overrides.
 *   `/maintenance [on/off]`
     *   **Arguments:** Optional toggle state.
     *   **Explanation:** Toggles global maintenance mode. When enabled, regular users are blocked from running commands. Requires `SUPER_ADMIN` only.
+*   `/pbroadcast <message>`
+    *   **Arguments:** Broadcast text (supports HTML tags).
+    *   **Explanation:** Broadcasts message to all users' private DMs at a safe rate limit of 30 messages/second. Sends a detailed failure report `.txt` file (with type, name, and username of failed chats) to super admins. Requires `SUPER_ADMIN` only.
+*   `/gbroadcast <message>`
+    *   **Arguments:** Broadcast text (supports HTML tags).
+    *   **Explanation:** Broadcasts message to all active groups. Sends a detailed failure report `.txt` file to super admins. Requires `SUPER_ADMIN` only.
+*   `/cbroadcast <message>`
+    *   **Arguments:** Broadcast text (supports HTML tags).
+    *   **Explanation:** Broadcasts message to all tracked channels. Sends a detailed failure report `.txt` file to super admins. Requires `SUPER_ADMIN` only.
 *   `/broadcast <message>`
     *   **Arguments:** Broadcast text (supports HTML tags).
-    *   **Explanation:** Asynchronously broadcasts a message to all registered users' private DMs at a safe rate limit of 30 messages/second. Requires `SUPER_ADMIN` only.
+    *   **Explanation:** Universally broadcasts message to all private DMs, active groups, and tracked channels. Sends a detailed failure report `.txt` file to super admins. Requires `SUPER_ADMIN` only.
 
 ---
 
@@ -206,6 +225,8 @@ Follow this logical path to verify the full bot logic:
     *   *Expected:* Interactive menu showing toggles for **Daily Challenge**, **Streak Warning**, and **Contest Alerts**.
 *   **Action:** Click a toggle button (e.g., `Streak Warning: ON`).
     *   *Expected:* Button status flips, updates the database, and shows a callback alert confirmation. Click `Save & Close` to save.
+*   **Action:** Send any of these commands using a dot `.` prefix instead of a slash `/` (e.g. `.ping`, `.profile`, `.reminders`).
+    *   *Expected:* The middleware interceptor rewrites the prefix and parses standard command entities, causing the command to run identically to its slash equivalent.
 
 ### 2. LeetCode Problems, AI, and Streaks
 *   **Action:** Send `/daily`, `/random easy two-pointers`, and `/contest`.
@@ -220,6 +241,10 @@ Follow this logical path to verify the full bot logic:
     *   *Expected:* Complete code auditing and code quality recommendations from Gemini Flash 2.0.
 *   **Action:** Send `/visualize <code>` (or reply to a code block with `/visualize`).
     *   *Expected:* Bot generates a Mermaid flowchart via Groq (Llama 3.3), encodes and renders it via `mermaid.ink` as a photo, and replies with a detailed step-by-step trace explanation of variables.
+*   **Action:** Send `/solve 1` or `/solve two-sum`.
+    *   *Expected:* Bot retrieves and renders the details card for *Two Sum* with direct solve links.
+*   **Action:** Send `/solve sum`.
+    *   *Expected:* Bot displays up to 5 ambiguous matches as buttons. Clicking one updates the card to the selected problem's details.
 
 ### 3. Spaced Repetition System (SRS)
 *   **Action:** Send `/solved`.
@@ -228,6 +253,12 @@ Follow this logical path to verify the full bot logic:
     *   *Expected:* Prompts with grading callback buttons (0 - Forgot to 5 - Perfect).
 *   **Action:** Click a grading option (e.g., `4 - Easy`).
     *   *Expected:* Database records review, calculates next date using SuperMemo SM-2, logs parameters (interval, ease factor), and awards 15 XP & 5 coins.
+*   **Action:** Send `/solved 1 4` for a problem you haven't solved on LeetCode.
+    *   *Expected:* Bot rejects the log and displays a warning to solve it on LeetCode first.
+*   **Action:** Send `/reviews`.
+    *   *Expected:* Bot returns your active review queue with `✅ Master` buttons. Clicking a button masters the item, pops it from the queue, and updates the message.
+*   **Action:** Send `/rm_srs 1` or `/rm_srs two-sum`.
+    *   *Expected:* Bot confirms manual deletion of *Two Sum* from your review queue.
 
 ### 4. Multiplayer Coding Battles (Group Chat / DM)
 *   **Action:** In a group, send `/battle @opponent_username`.
@@ -268,8 +299,10 @@ Follow this logical path to verify the full bot logic:
     *   *Expected:* User is globally banned, cached in Redis, sent a ban notification, and blocked from all bot commands.
 *   **Action:** Send `/maintenance on` as a super admin.
     *   *Expected:* Global maintenance mode enabled. Regular users trying to interact with the bot receive a block notice.
-*   **Action:** Send `/broadcast <b>Update:</b> Bot is operating normally.` as super admin.
-    *   *Expected:* Broadcast runs asynchronously, delivering the HTML message directly to all registered users in private DMs.
+*   **Action:** Send `/pbroadcast Update` or `/broadcast System Broadcast` as super admin.
+    *   *Expected:* Broadcast runs asynchronously, and DMs super admins a detailed `.txt` failure report containing the type, name, and username of any failed chats.
+*   **Action:** Trigger an unhandled exception or system error.
+    *   *Expected:* The private log channel receives a compact one-liner notification message, with the full traceback and update details attached directly to the same message as an `error_details.txt` file.
 
 ### 7. Conversational Fallback & Topic Navigation
 * **Action**: In private DM, send a greeting like `"hello"` or `"hi Memoize"`.
