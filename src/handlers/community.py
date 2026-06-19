@@ -103,6 +103,86 @@ async def cmd_gleaderboard(message: Message):
 
 
 
+OFFICIAL_LEETCODE_SLUGS = {
+    "array", "string", "hash-table", "dynamic-programming", "math", "sorting",
+    "greedy", "depth-first-search", "database", "breadth-first-search",
+    "binary-search", "tree", "matrix", "binary-tree", "two-pointers",
+    "bit-manipulation", "stack", "design", "heap-priority-queue", "backtracking",
+    "graph", "simulation", "prefix-sum", "sliding-window", "trie",
+    "linked-list", "recursion", "ordered-set", "monotonic-stack",
+    "divide-and-conquer", "binary-search-tree", "queue", "union-find",
+    "geometry", "combinatorics", "game-theory", "memoization", "topological-sort",
+    "segment-tree", "interactive", "binary-indexed-tree", "hash-function",
+    "string-matching", "rolling-hash", "shortest-path", "number-theory",
+    "randomized", "monotonic-queue", "merge-sort", "iterator", "concurrency",
+    "quickselect", "doubly-linked-list", "bucket-sort", "radix-sort",
+    "counting-sort", "eulerian-circuit", "strongly-connected-component",
+    "biconnected-component", "minimum-spanning-tree", "suffix-array",
+    "line-sweep", "shell"
+}
+
+TAG_SYNONYMS = {
+    "dp": "dynamic-programming",
+    "dfs": "depth-first-search",
+    "bfs": "breadth-first-search",
+    "trees": "tree",
+    "graphs": "graph",
+    "arrays": "array",
+    "strings": "string",
+    "linkedlist": "linked-list",
+    "twopointers": "two-pointers",
+    "slidingwindow": "sliding-window",
+    "binarysearch": "binary-search",
+    "binarytree": "binary-tree",
+    "bitmanipulation": "bit-manipulation",
+    "priorityqueue": "heap-priority-queue",
+    "priority-queue": "heap-priority-queue",
+    "heap": "heap-priority-queue",
+    "bst": "binary-search-tree",
+    "bit": "binary-indexed-tree",
+    "unionfind": "union-find",
+    "toposort": "topological-sort",
+    "mst": "minimum-spanning-tree",
+    "scc": "strongly-connected-component",
+}
+
+
+def resolve_tag_slug(tag_str: str) -> Optional[str]:
+    cleaned = tag_str.strip().lower()
+    if not cleaned:
+        return None
+        
+    if cleaned in TAG_SYNONYMS:
+        return TAG_SYNONYMS[cleaned]
+        
+    normalized = cleaned.replace(" ", "-").replace("_", "-")
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+        
+    if normalized in OFFICIAL_LEETCODE_SLUGS:
+        return normalized
+        
+    import difflib
+    matches = difflib.get_close_matches(normalized, list(OFFICIAL_LEETCODE_SLUGS), n=1, cutoff=0.8)
+    if matches:
+        return matches[0]
+        
+    best_match = None
+    best_ratio = 0.0
+    for slug in OFFICIAL_LEETCODE_SLUGS:
+        raw_slug = slug.replace("-", "")
+        raw_norm = normalized.replace("-", "")
+        ratio = difflib.SequenceMatcher(None, raw_norm, raw_slug).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_match = slug
+            
+    if best_ratio >= 0.8:
+        return best_match
+        
+    return normalized
+
+
 def parse_battle_args(args_list):
     difficulty = None
     tags = []
@@ -114,41 +194,25 @@ def parse_battle_args(args_list):
             tags.append(arg_lower)
     tag_slug = None
     if tags:
-        tag_str = "-".join(tags)
-        synonyms = {
-            "dp": "dynamic-programming",
-            "dynamic-programming": "dynamic-programming",
-            "trees": "tree",
-            "tree": "tree",
-            "graphs": "graph",
-            "graph": "graph",
-            "arrays": "array",
-            "array": "array",
-            "strings": "string",
-            "string": "string",
-            "hash": "hash-table",
-            "hashtable": "hash-table",
-            "hash-table": "hash-table",
-            "linkedlist": "linked-list",
-            "linked-list": "linked-list",
-            "two-pointers": "two-pointers",
-            "twopointers": "two-pointers",
-            "slidingwindow": "sliding-window",
-            "sliding-window": "sliding-window",
-            "binarysearch": "binary-search",
-            "binary-search": "binary-search",
-            "binarytree": "binary-tree",
-            "binary-tree": "binary-tree",
-            "bitmanipulation": "bit-manipulation",
-            "bit-manipulation": "bit-manipulation",
-            "dfs": "depth-first-search",
-            "bfs": "breadth-first-search",
-            "heap": "heap-priority-queue",
-            "priorityqueue": "heap-priority-queue",
-            "priority-queue": "heap-priority-queue",
-        }
-        tag_slug = synonyms.get(tag_str, tag_str)
+        tag_str = " ".join(tags)
+        tag_slug = resolve_tag_slug(tag_str)
     return difficulty, tag_slug
+
+
+def is_traditional_random_battle(args_list: list) -> bool:
+    if not args_list:
+        return True
+        
+    difficulty, tag_slug = parse_battle_args(args_list)
+    has_tag_args = any(arg.lower() not in ["easy", "medium", "hard"] for arg in args_list)
+    
+    if has_tag_args:
+        if tag_slug in OFFICIAL_LEETCODE_SLUGS:
+            return True
+        return False
+    else:
+        return True
+
 
 
 async def check_invitation_timeout(bot, battle_id):
@@ -306,78 +370,154 @@ async def cmd_battle(message: Message, command: CommandObject):
             args_list = args_split[1:]
 
     if is_open_battle:
-        difficulty, tag_slug = parse_battle_args(args_list)
-        if not difficulty:
-            difficulty = random.choice(["easy", "medium", "hard"])
-        difficulty_str = difficulty.capitalize()
-        filter_info = difficulty_str
-        if tag_slug:
-            filter_info += f" with tag: {tag_slug}"
+        if is_traditional_random_battle(args_list):
+            difficulty, tag_slug = parse_battle_args(args_list)
+            if not difficulty:
+                difficulty = random.choice(["easy", "medium", "hard"])
+            difficulty_str = difficulty.capitalize()
+            filter_info = difficulty_str
+            if tag_slug:
+                filter_info += f" with tag: {tag_slug}"
+                
+            progress_msg = await message.reply(f"🎲 Selecting a random {filter_info} problem... Please wait.")
+            problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty, tag_slug=tag_slug)
+            free_problems = [p for p in problems if not p.get("isPaidOnly")]
+            if not free_problems and tag_slug:
+                await progress_msg.edit_text(
+                    f"⚠️ Could not find any free problems with tag {html.code(tag_slug)} ({difficulty_str}).\n"
+                    f"Selecting a random {difficulty_str} problem instead.",
+                    parse_mode="HTML"
+                )
+                problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty)
+                free_problems = [p for p in problems if not p.get("isPaidOnly")]
+                tag_slug = None
+            if not free_problems:
+                await progress_msg.edit_text("❌ Error picking a battle problem. Please try again.")
+                return
+                
+            selected_prob = random.choice(free_problems)
+            problem_slug = selected_prob["titleSlug"]
+            problem_title = selected_prob["title"]
             
-        progress_msg = await message.reply(f"🎲 Selecting a random {filter_info} problem... Please wait.")
-        problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty, tag_slug=tag_slug)
-        free_problems = [p for p in problems if not p.get("isPaidOnly")]
-        if not free_problems and tag_slug:
-            await progress_msg.edit_text(
-                f"⚠️ Could not find any free problems with tag {html.code(tag_slug)} ({difficulty_str}).\n"
-                f"Selecting a random {difficulty_str} problem instead.",
+            expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+            
+            battle = await db.create_group_battle(
+                group_id=message.chat.id,
+                problem_slug=problem_slug,
+                problem_title=problem_title,
+                difficulty=difficulty_str,
+                created_by=user_id,
+                expires_at=expires_at
+            )
+            battle_id = battle["id"]
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🎮 Join Battle", callback_data=f"gbattle_join:{battle_id}"),
+                    InlineKeyboardButton(text="🏁 Start Battle", callback_data=f"gbattle_start:{battle_id}")
+                ]
+            ])
+            
+            creator_name = message.from_user.first_name or message.from_user.username or "Challenger"
+            invitation_info = difficulty_str
+            if tag_slug:
+                invitation_info += f" (Tag: {tag_slug})"
+                
+            invite_msg = (
+                f"⚔️ {html.bold('LeetCode Group Battle Arena Open!')} ⚔️\n\n"
+                f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                f"👤 Host: {html.bold(creator_name)}\n"
+                f"🏆 Problem Category: {html.bold(invitation_info)}\n"
+                f"⏳ Time Limit: {html.bold('60 minutes')} (once started)\n\n"
+                f"👉 Click {html.bold('Join Battle')} below to enter the arena! "
+                f"All registered group members can participate.\n"
+                f"Host, click {html.bold('Start Battle')} once players have joined."
+            )
+            
+            await progress_msg.delete()
+            sent_msg = await message.bot.send_message(
+                chat_id=message.chat.id,
+                text=invite_msg,
+                reply_markup=keyboard,
                 parse_mode="HTML"
             )
-            problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty)
-            free_problems = [p for p in problems if not p.get("isPaidOnly")]
-            tag_slug = None
-        if not free_problems:
-            await progress_msg.edit_text("❌ Error picking a battle problem. Please try again.")
+            await db.update_group_battle_message(str(battle_id), sent_msg.message_id)
             return
-            
-        selected_prob = random.choice(free_problems)
-        problem_slug = selected_prob["titleSlug"]
-        problem_title = selected_prob["title"]
-        
-        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
-        
-        battle = await db.create_group_battle(
-            group_id=message.chat.id,
-            problem_slug=problem_slug,
-            problem_title=problem_title,
-            difficulty=difficulty_str,
-            created_by=user_id,
-            expires_at=expires_at
-        )
-        battle_id = battle["id"]
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🎮 Join Battle", callback_data=f"gbattle_join:{battle_id}"),
-                InlineKeyboardButton(text="🏁 Start Battle", callback_data=f"gbattle_start:{battle_id}")
-            ]
-        ])
-        
-        creator_name = message.from_user.first_name or message.from_user.username or "Challenger"
-        invitation_info = difficulty_str
-        if tag_slug:
-            invitation_info += f" (Tag: {tag_slug})"
-            
-        invite_msg = (
-            f"⚔️ {html.bold('LeetCode Group Battle Arena Open!')} ⚔️\n\n"
-            f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
-            f"👤 Host: {html.bold(creator_name)}\n"
-            f"🏆 Problem Category: {html.bold(invitation_info)}\n"
-            f"⏳ Time Limit: {html.bold('60 minutes')} (once started)\n\n"
-            f"👉 Click {html.bold('Join Battle')} below to enter the arena! "
-            f"All registered group members can participate.\n"
-            f"Host, click {html.bold('Start Battle')} once players have joined."
-        )
-        
-        await progress_msg.delete()
-        sent_msg = await message.bot.send_message(
-            chat_id=message.chat.id,
-            text=invite_msg,
-            reply_markup=keyboard,
-            parse_mode="HTML"
-        )
-        await db.update_group_battle_message(str(battle_id), sent_msg.message_id)
-        return
+        else:
+            # Specific problem query lobby
+            query = " ".join(args_list)
+            status_msg = await message.reply(f"🤖 Searching LeetCode for problem '{query}'...")
+            matches = await leetcode_client.resolve_problem_query(query)
+            if not matches:
+                await status_msg.edit_text(f"❌ Could not find any problems matching '{query}'.")
+                return
+
+            if len(matches) == 1:
+                selected_prob = matches[0]
+                problem_slug = selected_prob["titleSlug"]
+                problem_title = selected_prob["title"]
+                difficulty_str = selected_prob["difficulty"].capitalize()
+                expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+                
+                battle = await db.create_group_battle(
+                    group_id=message.chat.id,
+                    problem_slug=problem_slug,
+                    problem_title=problem_title,
+                    difficulty=difficulty_str,
+                    created_by=user_id,
+                    expires_at=expires_at
+                )
+                battle_id = battle["id"]
+                
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(text="🎮 Join Battle", callback_data=f"gbattle_join:{battle_id}"),
+                        InlineKeyboardButton(text="🏁 Start Battle", callback_data=f"gbattle_start:{battle_id}")
+                    ]
+                ])
+                
+                creator_name = message.from_user.first_name or message.from_user.username or "Challenger"
+                q_num = selected_prob.get("frontendQuestionId", "")
+                q_prefix = f"{q_num}. " if q_num else ""
+                invite_msg = (
+                    f"⚔️ {html.bold('LeetCode Group Battle Arena Open!')} ⚔️\n\n"
+                    f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                    f"👤 Host: {html.bold(creator_name)}\n"
+                    f"🏆 Problem: {html.bold(f'{q_prefix}{problem_title} ({difficulty_str})')}\n"
+                    f"⏳ Time Limit: {html.bold('60 minutes')} (once started)\n\n"
+                    f"👉 Click {html.bold('Join Battle')} below to enter the arena! "
+                    f"All registered group members can participate.\n"
+                    f"Host, click {html.bold('Start Battle')} once players have joined."
+                )
+                
+                await status_msg.delete()
+                sent_msg = await message.bot.send_message(
+                    chat_id=message.chat.id,
+                    text=invite_msg,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                await db.update_group_battle_message(str(battle_id), sent_msg.message_id)
+                return
+            else:
+                context = {
+                    "type": "group",
+                    "group_id": message.chat.id,
+                    "problems": matches[:5]
+                }
+                await cache_manager.set(f"battle_search:{user_id}", context, expire_seconds=300)
+                
+                keyboard_buttons = []
+                for idx, q in enumerate(matches[:5]):
+                    button_text = f"⚔️ {q.get('frontendQuestionId', '')}. {q['title']} ({q.get('difficulty', 'Medium')})"
+                    keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"gbattle_select_prob:{idx}")])
+                
+                keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+                await status_msg.edit_text(
+                    f"🔍 Multiple matching problems found for '{query}'. Please select one to create the lobby:",
+                    reply_markup=keyboard
+                )
+                return
 
     challenger_in_battle = await db.fetchrow(
         "SELECT id FROM battles WHERE (challenger_id = $1 OR opponent_id = $1) AND status IN ('ACTIVE', 'PAUSED')",
@@ -444,119 +584,405 @@ async def cmd_battle(message: Message, command: CommandObject):
         opponent_display = opponent_row['first_name'] or opponent_row['username'] or str(opponent_id)
         await message.reply(f"❌ Your opponent {html.bold(opponent_display)} has not linked their LeetCode profile yet.", parse_mode="HTML")
         return
-    difficulty, tag_slug = parse_battle_args(args_list)
-    if not difficulty:
-        difficulty = random.choice(["easy", "medium", "hard"])
-    difficulty_str = difficulty.capitalize()
-    filter_info = difficulty_str
-    if tag_slug:
-        filter_info += f" with tag: {tag_slug}"
-    await message.reply(f"🎲 Selecting a random {filter_info} problem... Please wait.")
-    problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty, tag_slug=tag_slug)
-    free_problems = [p for p in problems if not p.get("isPaidOnly")]
-    if not free_problems and tag_slug:
-        await message.reply(
-            f"⚠️ Could not find any free problems with tag {html.code(tag_slug)} ({difficulty_str}).\n"
-            f"Selecting a random {difficulty_str} problem instead.",
-            parse_mode="HTML"
-        )
-        problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty)
+    
+    opp_display = opponent_row['first_name'] or opponent_row['username'] or str(opponent_id)
+    opp_tag = f"@{opponent_row['username']}" if opponent_row['username'] else opp_display
+
+    if is_traditional_random_battle(args_list):
+        difficulty, tag_slug = parse_battle_args(args_list)
+        if not difficulty:
+            difficulty = random.choice(["easy", "medium", "hard"])
+        difficulty_str = difficulty.capitalize()
+        filter_info = difficulty_str
+        if tag_slug:
+            filter_info += f" with tag: {tag_slug}"
+        await message.reply(f"🎲 Selecting a random {filter_info} problem... Please wait.")
+        problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty, tag_slug=tag_slug)
         free_problems = [p for p in problems if not p.get("isPaidOnly")]
-        tag_slug = None
-    if not free_problems:
-        await message.reply("❌ Error picking a battle problem. Please try again.")
+        if not free_problems and tag_slug:
+            await message.reply(
+                f"⚠️ Could not find any free problems with tag {html.code(tag_slug)} ({difficulty_str}).\n"
+                f"Selecting a random {difficulty_str} problem instead.",
+                parse_mode="HTML"
+            )
+            problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty)
+            free_problems = [p for p in problems if not p.get("isPaidOnly")]
+            tag_slug = None
+        if not free_problems:
+            await message.reply("❌ Error picking a battle problem. Please try again.")
+            return
+        selected_prob = random.choice(free_problems)
+        problem_slug = selected_prob["titleSlug"]
+        problem_title = selected_prob["title"]
+        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+        battle = await db.create_battle(user_id, opponent_id, problem_slug, problem_title, difficulty_str, expires_at)
+        battle_id = battle["id"]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚔️ Accept", callback_data=f"battle_accept:{battle_id}"),
+                InlineKeyboardButton(text="🏳️ Decline", callback_data=f"battle_decline:{battle_id}")
+            ]
+        ])
+        invitation_info = difficulty_str
+        if tag_slug:
+            invitation_info += f" (Tag: {tag_slug})"
+        challenge_msg = (
+            f"⚔️ {html.bold('LeetCode Battle Challenge!')} ⚔️\n\n"
+            f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+            f"👤 Challenger: {html.bold(message.from_user.first_name or message.from_user.username)}\n"
+            f"👤 Opponent: {html.bold(opp_display)}\n\n"
+            f"🏆 Category: {html.bold(invitation_info)}\n"
+            f"⏳ Time Limit: {html.bold('60 minutes')} once started\n\n"
+            f"{opp_tag}, do you accept this challenge?"
+        )
+        is_private = message.chat.type == "private"
+        
+        if is_private:
+            try:
+                sent_msg = await message.bot.send_message(
+                    chat_id=opponent_id,
+                    text=challenge_msg,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
+                await message.reply(
+                    f"⚔️ {html.bold('LeetCode Battle Challenge Sent!')} ⚔️\n\n"
+                    f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                    f"We have sent the challenge directly to <a href='tg://user?id={opponent_id}'>{opp_display}</a>'s DMs. "
+                    f"Waiting for them to accept or decline.",
+                    parse_mode="HTML"
+                )
+                try:
+                    from src.utils.logging_helper import send_log
+                    log_text = (
+                        f"📩 {html.bold('LeetCode Battle Challenge Sent (DM)')} 📩\n\n"
+                        f"• {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                        f"• {html.bold('Challenger:')} <a href='tg://user?id={user_id}'>{message.from_user.first_name or message.from_user.username}</a> ({user_id})\n"
+                        f"• {html.bold('Opponent:')} <a href='tg://user?id={opponent_id}'>{opp_display}</a> ({opponent_id})\n"
+                        f"• {html.bold('Problem Category:')} {invitation_info}"
+                    )
+                    await send_log(log_text, disable_notification=True)
+                except Exception as log_err:
+                    logger.error(f"Error logging DM challenge: {log_err}")
+            except Exception as dm_err:
+                logger.error(f"Failed to send DM challenge: {dm_err}")
+                await db.update_battle_status(str(battle_id), "CANCELLED")
+                await message.reply(
+                    f"❌ Cannot challenge {html.bold(opp_display)} in DM because the bot cannot message them. "
+                    f"Please ask them to start the bot first.",
+                    parse_mode="HTML"
+                )
+                return
+        else:
+            sent_msg = await message.bot.send_message(
+                chat_id=message.chat.id,
+                text=challenge_msg,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
+            try:
+                group_title = f" '{message.chat.title}'" if message.chat.title else ""
+                await message.bot.send_message(
+                    chat_id=opponent_id,
+                    text=f"⚔️ You have been challenged to a LeetCode Battle by @{message.from_user.username or message.from_user.first_name} in group{group_title}! Check the group to accept or decline."
+                )
+            except Exception:
+                pass
+        asyncio.create_task(check_invitation_timeout(message.bot, str(battle_id)))
         return
-    selected_prob = random.choice(free_problems)
+    else:
+        # Specific problem query 1v1 challenge
+        query = " ".join(args_list)
+        status_msg = await message.reply(f"🤖 Searching LeetCode for problem '{query}'...")
+        matches = await leetcode_client.resolve_problem_query(query)
+        if not matches:
+            await status_msg.edit_text(f"❌ Could not find any problems matching '{query}'.")
+            return
+
+        if len(matches) == 1:
+            selected_prob = matches[0]
+            problem_slug = selected_prob["titleSlug"]
+            problem_title = selected_prob["title"]
+            difficulty_str = selected_prob["difficulty"].capitalize()
+            expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+            battle = await db.create_battle(user_id, opponent_id, problem_slug, problem_title, difficulty_str, expires_at)
+            battle_id = battle["id"]
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="⚔️ Accept", callback_data=f"battle_accept:{battle_id}"),
+                    InlineKeyboardButton(text="🏳️ Decline", callback_data=f"battle_decline:{battle_id}")
+                ]
+            ])
+            q_num = selected_prob.get("frontendQuestionId", "")
+            q_prefix = f"{q_num}. " if q_num else ""
+            challenge_msg = (
+                f"⚔️ {html.bold('LeetCode Battle Challenge!')} ⚔️\n\n"
+                f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                f"👤 Challenger: {html.bold(message.from_user.first_name or message.from_user.username)}\n"
+                f"👤 Opponent: {html.bold(opp_display)}\n\n"
+                f"🏆 Problem: {html.bold(f'{q_prefix}{problem_title} ({difficulty_str})')}\n"
+                f"⏳ Time Limit: {html.bold('60 minutes')} once started\n\n"
+                f"{opp_tag}, do you accept this challenge?"
+            )
+            is_private = message.chat.type == "private"
+            
+            await status_msg.delete()
+            if is_private:
+                try:
+                    sent_msg = await message.bot.send_message(
+                        chat_id=opponent_id,
+                        text=challenge_msg,
+                        reply_markup=keyboard,
+                        parse_mode="HTML"
+                    )
+                    await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
+                    await message.reply(
+                        f"⚔️ {html.bold('LeetCode Battle Challenge Sent!')} ⚔️\n\n"
+                        f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                        f"We have sent the challenge directly to <a href='tg://user?id={opponent_id}'>{opp_display}</a>'s DMs. "
+                        f"Waiting for them to accept or decline.",
+                        parse_mode="HTML"
+                    )
+                    try:
+                        from src.utils.logging_helper import send_log
+                        log_text = (
+                            f"📩 {html.bold('LeetCode Battle Challenge Sent (DM)')} 📩\n\n"
+                            f"• {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+                            f"• {html.bold('Challenger:')} <a href='tg://user?id={user_id}'>{message.from_user.first_name or message.from_user.username}</a> ({user_id})\n"
+                            f"• {html.bold('Opponent:')} <a href='tg://user?id={opponent_id}'>{opp_display}</a> ({opponent_id})\n"
+                            f"• {html.bold('Problem:')} {selected_prob.get('frontendQuestionId', '')}. {problem_title} ({difficulty_str})"
+                        )
+                        await send_log(log_text, disable_notification=True)
+                    except Exception as log_err:
+                        logger.error(f"Error logging DM challenge: {log_err}")
+                except Exception as dm_err:
+                    logger.error(f"Failed to send DM challenge: {dm_err}")
+                    await db.update_battle_status(str(battle_id), "CANCELLED")
+                    await message.reply(
+                        f"❌ Cannot challenge {html.bold(opp_display)} in DM because the bot cannot message them. "
+                        f"Please ask them to start the bot first.",
+                        parse_mode="HTML"
+                    )
+                    return
+            else:
+                sent_msg = await message.bot.send_message(
+                    chat_id=message.chat.id,
+                    text=challenge_msg,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+                await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
+                try:
+                    group_title = f" '{message.chat.title}'" if message.chat.title else ""
+                    await message.bot.send_message(
+                        chat_id=opponent_id,
+                        text=f"⚔️ You have been challenged to a LeetCode Battle by @{message.from_user.username or message.from_user.first_name} in group{group_title}! Check the group to accept or decline."
+                    )
+                except Exception:
+                    pass
+            asyncio.create_task(check_invitation_timeout(message.bot, str(battle_id)))
+            return
+        else:
+            context = {
+                "type": "1v1",
+                "opponent_id": opponent_id,
+                "opponent_display": opp_display,
+                "opponent_username": opponent_row["username"] or str(opponent_id),
+                "group_id": message.chat.id,
+                "problems": matches[:5]
+            }
+            await cache_manager.set(f"battle_search:{user_id}", context, expire_seconds=300)
+            
+            keyboard_buttons = []
+            for idx, q in enumerate(matches[:5]):
+                button_text = f"⚔️ {q.get('frontendQuestionId', '')}. {q['title']} ({q.get('difficulty', 'Medium')})"
+                keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"battle_select_prob:{idx}")])
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+            await status_msg.edit_text(
+                f"🔍 Multiple matching problems found for '{query}'. Please select one to challenge {html.bold(opp_display)}:",
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            return
+
+
+@router.callback_query(F.data.startswith("battle_select_prob:"))
+async def process_battle_select_prob(callback_query: CallbackQuery):
+    challenger_id = callback_query.from_user.id
+    prob_idx = int(callback_query.data.split(":")[1])
+    
+    context = await cache_manager.get(f"battle_search:{challenger_id}")
+    if not context or context.get("type") != "1v1":
+        await callback_query.answer("⚠️ Either this menu has expired or only the challenger can click this.", show_alert=True)
+        return
+        
+    problems = context.get("problems", [])
+    if prob_idx >= len(problems):
+        await callback_query.answer("⚠️ Selected problem is invalid.", show_alert=True)
+        return
+        
+    selected_prob = problems[prob_idx]
+    opponent_id = context["opponent_id"]
+    opp_display = context["opponent_display"]
+    opp_tag = f"@{context['opponent_username']}" if context["opponent_username"] and not context["opponent_username"].isdigit() else opp_display
+    
     problem_slug = selected_prob["titleSlug"]
     problem_title = selected_prob["title"]
+    difficulty_str = selected_prob["difficulty"].capitalize()
+    
+    await cache_manager.delete(f"battle_search:{challenger_id}")
+    
     expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
-    battle = await db.create_battle(user_id, opponent_id, problem_slug, problem_title, difficulty_str, expires_at)
+    battle = await db.create_battle(challenger_id, opponent_id, problem_slug, problem_title, difficulty_str, expires_at)
     battle_id = battle["id"]
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="⚔️ Accept", callback_data=f"battle_accept:{battle_id}"),
             InlineKeyboardButton(text="🏳️ Decline", callback_data=f"battle_decline:{battle_id}")
         ]
     ])
-    opp_display = opponent_row['first_name'] or opponent_row['username'] or str(opponent_id)
-    opp_tag = f"@{opponent_row['username']}" if opponent_row['username'] else opp_display
-    invitation_info = difficulty_str
-    if tag_slug:
-        invitation_info += f" (Tag: {tag_slug})"
+    
+    q_num = selected_prob.get("frontendQuestionId", "")
+    q_prefix = f"{q_num}. " if q_num else ""
     challenge_msg = (
         f"⚔️ {html.bold('LeetCode Battle Challenge!')} ⚔️\n\n"
         f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
-        f"👤 Challenger: {html.bold(message.from_user.first_name or message.from_user.username)}\n"
+        f"👤 Challenger: {html.bold(callback_query.from_user.first_name or callback_query.from_user.username)}\n"
         f"👤 Opponent: {html.bold(opp_display)}\n\n"
-        f"🏆 Category: {html.bold(invitation_info)}\n"
+        f"🏆 Problem: {html.bold(f'{q_prefix}{problem_title} ({difficulty_str})')}\n"
         f"⏳ Time Limit: {html.bold('60 minutes')} once started\n\n"
         f"{opp_tag}, do you accept this challenge?"
     )
-    is_private = message.chat.type == "private"
+    
+    is_private = callback_query.message.chat.type == "private"
     
     if is_private:
-        # Check if the opponent has started the bot by trying to message them
+        await callback_query.message.edit_text(
+            f"⚔️ {html.bold('LeetCode Battle Challenge Sent!')} ⚔️\n\n"
+            f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+            f"We have sent the challenge directly to <a href='tg://user?id={opponent_id}'>{opp_display}</a>'s DMs. "
+            f"Waiting for them to accept or decline.",
+            parse_mode="HTML"
+        )
+        
         try:
-            sent_msg = await message.bot.send_message(
+            sent_msg = await callback_query.bot.send_message(
                 chat_id=opponent_id,
                 text=challenge_msg,
                 reply_markup=keyboard,
                 parse_mode="HTML"
             )
-            # Store opponent's chat_id and message_id
             await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
             
-            # Send confirmation to challenger
-            await message.reply(
-                f"⚔️ {html.bold('LeetCode Battle Challenge Sent!')} ⚔️\n\n"
-                f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
-                f"We have sent the challenge directly to <a href='tg://user?id={opponent_id}'>{opp_display}</a>'s DMs. "
-                f"Waiting for them to accept or decline.",
-                parse_mode="HTML"
-            )
-            
-            # Log private DM challenge sent to log channel
             try:
                 from src.utils.logging_helper import send_log
                 log_text = (
                     f"📩 {html.bold('LeetCode Battle Challenge Sent (DM)')} 📩\n\n"
                     f"• {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
-                    f"• {html.bold('Challenger:')} <a href='tg://user?id={user_id}'>{message.from_user.first_name or message.from_user.username}</a> ({user_id})\n"
+                    f"• {html.bold('Challenger:')} <a href='tg://user?id={challenger_id}'>{callback_query.from_user.first_name or callback_query.from_user.username}</a> ({challenger_id})\n"
                     f"• {html.bold('Opponent:')} <a href='tg://user?id={opponent_id}'>{opp_display}</a> ({opponent_id})\n"
-                    f"• {html.bold('Problem Category:')} {invitation_info}"
+                    f"• {html.bold('Problem:')} {selected_prob.get('frontendQuestionId', '')}. {problem_title} ({difficulty_str})"
                 )
                 await send_log(log_text, disable_notification=True)
             except Exception as log_err:
-                logger.error(f"Error logging DM challenge sent to log channel: {log_err}")
-                
+                logger.error(f"Error logging DM challenge: {log_err}")
         except Exception as dm_err:
-            logger.error(f"Failed to send DM challenge to opponent {opponent_id}: {dm_err}")
+            logger.error(f"Failed to send DM challenge: {dm_err}")
             await db.update_battle_status(str(battle_id), "CANCELLED")
-            await message.reply(
+            await callback_query.message.reply(
                 f"❌ Cannot challenge {html.bold(opp_display)} in DM because the bot cannot message them. "
-                f"Please ask them to start the bot first by clicking @MemoizeLC_bot and pressing Start.",
+                f"Please ask them to start the bot first.",
                 parse_mode="HTML"
             )
-            return
     else:
-        # Group challenge logic
-        sent_msg = await message.bot.send_message(
-            chat_id=message.chat.id,
+        await callback_query.message.edit_text(
             text=challenge_msg,
             reply_markup=keyboard,
             parse_mode="HTML"
         )
-        await db.update_battle_message(str(battle_id), sent_msg.chat.id, sent_msg.message_id)
+        await db.update_battle_message(str(battle_id), callback_query.message.chat.id, callback_query.message.message_id)
+        
         try:
-            group_title = f" '{message.chat.title}'" if message.chat.title else ""
-            await message.bot.send_message(
+            group_title = f" '{callback_query.message.chat.title}'" if callback_query.message.chat.title else ""
+            await callback_query.bot.send_message(
                 chat_id=opponent_id,
-                text=f"⚔️ You have been challenged to a LeetCode Battle by @{message.from_user.username or message.from_user.first_name} in group{group_title}! Check the group to accept or decline."
+                text=f"⚔️ You have been challenged to a LeetCode Battle by @{callback_query.from_user.username or callback_query.from_user.first_name} in group{group_title}! Check the group to accept or decline."
             )
         except Exception:
             pass
             
-    asyncio.create_task(check_invitation_timeout(message.bot, str(battle_id)))
+    asyncio.create_task(check_invitation_timeout(callback_query.bot, str(battle_id)))
+    await callback_query.answer()
+
+
+@router.callback_query(F.data.startswith("gbattle_select_prob:"))
+async def process_gbattle_select_prob(callback_query: CallbackQuery):
+    challenger_id = callback_query.from_user.id
+    prob_idx = int(callback_query.data.split(":")[1])
+    
+    context = await cache_manager.get(f"battle_search:{challenger_id}")
+    if not context or context.get("type") != "group":
+        await callback_query.answer("⚠️ Either this menu has expired or only the host can click this.", show_alert=True)
+        return
+        
+    problems = context.get("problems", [])
+    if prob_idx >= len(problems):
+        await callback_query.answer("⚠️ Selected problem is invalid.", show_alert=True)
+        return
+        
+    selected_prob = problems[prob_idx]
+    problem_slug = selected_prob["titleSlug"]
+    problem_title = selected_prob["title"]
+    difficulty_str = selected_prob["difficulty"].capitalize()
+    
+    await cache_manager.delete(f"battle_search:{challenger_id}")
+    
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+    battle = await db.create_group_battle(
+        group_id=callback_query.message.chat.id,
+        problem_slug=problem_slug,
+        problem_title=problem_title,
+        difficulty=difficulty_str,
+        created_by=challenger_id,
+        expires_at=expires_at
+    )
+    battle_id = battle["id"]
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="... Join Battle", callback_data=f"gbattle_join:{battle_id}"),
+            InlineKeyboardButton(text="🏁 Start Battle", callback_data=f"gbattle_start:{battle_id}")
+        ]
+    ])
+    
+    # Wait, the join button text was "🎮 Join Battle" in original. Let's make sure it is exactly correct.
+    keyboard.inline_keyboard[0][0].text = "🎮 Join Battle"
+    
+    creator_name = callback_query.from_user.first_name or callback_query.from_user.username or "Challenger"
+    q_num = selected_prob.get("frontendQuestionId", "")
+    q_prefix = f"{q_num}. " if q_num else ""
+    invite_msg = (
+        f"⚔️ {html.bold('LeetCode Group Battle Arena Open!')} ⚔️\n\n"
+        f"🆔 {html.bold('Battle ID:')} {html.code(str(battle_id))}\n"
+        f"👤 Host: {html.bold(creator_name)}\n"
+        f"🏆 Problem: {html.bold(f'{q_prefix}{problem_title} ({difficulty_str})')}\n"
+        f"⏳ Time Limit: {html.bold('60 minutes')} (once started)\n\n"
+        f"👉 Click {html.bold('Join Battle')} below to enter the arena! "
+        f"All registered group members can participate.\n"
+        f"Host, click {html.bold('Start Battle')} once players have joined."
+    )
+    
+    await callback_query.message.edit_text(
+        text=invite_msg,
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+    await db.update_group_battle_message(str(battle_id), callback_query.message.message_id)
+    await callback_query.answer()
 
 
 @router.callback_query(F.data.startswith("battle_accept:"))

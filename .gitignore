@@ -24,4 +24,8 @@ logs/
 .DS_Store
 Thumbs.db
 
+# Techstack
 leetcode-companion-techstack.md
+
+# scratch
+scratch/
