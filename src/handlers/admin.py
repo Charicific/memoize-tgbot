@@ -195,15 +195,14 @@ async def _run_broadcast(
         lines.append("---")
         report_bytes = "\n".join(lines).encode("utf-8")
 
-        for admin_id in settings.super_admin_ids:
-            try:
-                await bot.send_document(
-                    chat_id=admin_id,
-                    document=BufferedInputFile(report_bytes, filename=f"broadcast_failures_{now_str[:10]}.txt"),
-                    caption=f"📋 Broadcast failure report — {fail_count} failed chats ({scope_label})",
-                )
-            except Exception as e:
-                logger.error(f"Failed to DM failure report to super admin {admin_id}: {e}")
+        try:
+            await bot.send_document(
+                chat_id=message.from_user.id,
+                document=BufferedInputFile(report_bytes, filename=f"broadcast_failures_{now_str[:10]}.txt"),
+                caption=f"📋 Broadcast failure report — {fail_count} failed chats ({scope_label})",
+            )
+        except Exception as e:
+            logger.error(f"Failed to DM failure report to initiator super admin {message.from_user.id}: {e}")
 
 
 @router.message(Command("pbroadcast"), RoleFilter(UserRole.SUPER_ADMIN))

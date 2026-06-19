@@ -129,6 +129,7 @@ class SupabaseDB:
                 logger.info("Checked/Added paused_at and remaining_seconds columns to group_battles table.")
 
                 # Clean up existing Telegram service account entries if present
+                await self.execute("UPDATE battles SET winner_id = NULL WHERE winner_id = 777000;")
                 await self.execute("DELETE FROM group_members WHERE telegram_id = 777000;")
                 await self.execute("DELETE FROM users WHERE telegram_id = 777000;")
                 logger.info("Checked/Cleaned up Telegram service account (777000) entries.")

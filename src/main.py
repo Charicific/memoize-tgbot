@@ -1149,19 +1149,21 @@ async def lifespan(app: FastAPI):
     # Register Bot routes
     dp.include_router(get_main_router())
 
+    allowed_updates = dp.resolve_used_update_types()
+
     # Webhook mode vs Polling mode setup
     if settings.WEBHOOK_URL:
         # Register webhook URL
         webhook_full_url = f"{settings.WEBHOOK_URL.rstrip('/')}{settings.WEBHOOK_PATH}"
-        logger.info(f"Setting webhook to: {webhook_full_url}")
-        await bot.set_webhook(url=webhook_full_url, drop_pending_updates=True)
+        logger.info(f"Setting webhook to: {webhook_full_url} with allowed_updates={allowed_updates}")
+        await bot.set_webhook(url=webhook_full_url, allowed_updates=allowed_updates, drop_pending_updates=True)
     else:
         logger.info(
-            "No WEBHOOK_URL found. Bot will run in polling mode asynchronously."
+            f"No WEBHOOK_URL found. Bot will run in polling mode asynchronously with allowed_updates={allowed_updates}"
         )
         await bot.delete_webhook(drop_pending_updates=True)
         # Run dispatcher polling in the background event loop
-        asyncio.create_task(dp.start_polling(bot))
+        asyncio.create_task(dp.start_polling(bot, allowed_updates=allowed_updates))
 
     # Setup scheduler jobs
     # Poll all active battles (1v1 and group) every 30 seconds
