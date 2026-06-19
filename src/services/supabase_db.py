@@ -97,6 +97,16 @@ class SupabaseDB:
                 """)
                 logger.info("Checked/Created group_battle_participants table.")
 
+                # Check/create bot_channels table
+                await self.execute("""
+                CREATE TABLE IF NOT EXISTS bot_channels (
+                    channel_id BIGINT PRIMARY KEY,
+                    title TEXT,
+                    added_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                logger.info("Checked/Created bot_channels table.")
+
                 # Create performance indexes
                 await self.execute("CREATE INDEX IF NOT EXISTS idx_problem_history_solved_at ON problem_history(solved_at);")
                 await self.execute("CREATE INDEX IF NOT EXISTS idx_srs_reviews_next_date ON srs_reviews(next_review_date);")
@@ -117,6 +127,11 @@ class SupabaseDB:
                 await self.execute("ALTER TABLE group_battles ADD COLUMN IF NOT EXISTS paused_at TIMESTAMP WITH TIME ZONE;")
                 await self.execute("ALTER TABLE group_battles ADD COLUMN IF NOT EXISTS remaining_seconds INT;")
                 logger.info("Checked/Added paused_at and remaining_seconds columns to group_battles table.")
+
+                # Clean up existing Telegram service account entries if present
+                await self.execute("DELETE FROM group_members WHERE telegram_id = 777000;")
+                await self.execute("DELETE FROM users WHERE telegram_id = 777000;")
+                logger.info("Checked/Cleaned up Telegram service account (777000) entries.")
 
             except Exception as e:
                 logger.error(f"Failed to connect to database: {e}")
@@ -164,6 +179,9 @@ class SupabaseDB:
         return dict(row) if row else None
 
     async def create_user(self, telegram_id: int, username: Optional[str], first_name: Optional[str]) -> Dict[str, Any]:
+        # Safety net: never record Telegram's service account
+        if telegram_id == 777000:
+            return {}
         query = """
         INSERT INTO users (telegram_id, username, first_name)
         VALUES ($1, $2, $3)
@@ -364,7 +382,15 @@ class SupabaseDB:
             (SELECT COUNT(*) FROM battles WHERE status IN ('ACTIVE', 'PENDING')) AS active_battles,
             (SELECT COUNT(*) FROM battles WHERE status = 'COMPLETED') AS completed_battles,
             (SELECT COUNT(*) FROM problem_history) AS total_solved,
-            (SELECT COUNT(*) FROM srs_reviews) AS total_srs
+            (SELECT COUNT(*) FROM srs_reviews) AS total_srs,
+            (SELECT COUNT(DISTINCT group_id) FROM group_members) AS total_groups,
+            (SELECT COUNT(*) FROM bot_channels) AS total_channels,
+            (
+                SELECT COUNT(*) FROM users
+                WHERE COALESCE(remind_daily, TRUE) = TRUE
+                   OR COALESCE(remind_streak, TRUE) = TRUE
+                   OR COALESCE(remind_contests, TRUE) = TRUE
+            ) AS reminder_users
         """
         row = await self.fetchrow(query)
         if row:
@@ -377,7 +403,10 @@ class SupabaseDB:
             "active_battles": 0,
             "completed_battles": 0,
             "total_solved": 0,
-            "total_srs": 0
+            "total_srs": 0,
+            "total_groups": 0,
+            "total_channels": 0,
+            "reminder_users": 0,
         }
 
     # --- Group Memberships & Leaderboards ---
@@ -586,8 +615,26 @@ class SupabaseDB:
         """
         await self.execute(query, group_battle_id, telegram_id, solved_at, solve_time_seconds)
 
+    # --- Bot Channels ---
+
+    async def record_bot_channel(self, channel_id: int, title: Optional[str]):
+        """Record a channel the bot has been added to."""
+        query = """
+        INSERT INTO bot_channels (channel_id, title)
+        VALUES ($1, $2)
+        ON CONFLICT (channel_id) DO UPDATE SET title = EXCLUDED.title
+        """
+        await self.execute(query, channel_id, title)
+
+    async def remove_bot_channel(self, channel_id: int):
+        """Remove a channel the bot has been kicked from."""
+        await self.execute("DELETE FROM bot_channels WHERE channel_id = $1", channel_id)
+
+    async def get_all_channels(self) -> List[int]:
+        """Return all channel IDs the bot is a member of."""
+        rows = await self.fetch("SELECT channel_id FROM bot_channels")
+        return [r["channel_id"] for r in rows]
+
+
 # Global DB Instance
 db = SupabaseDB()
-
-
-

@@ -37,9 +37,13 @@ async def cmd_start(message: Message, command: CommandObject):
         # Auto-create user record in case they haven't started the bot yet
         await db.create_user(user_id, username, first_name)
         
-        await message.reply("🔍 Fetching today's LeetCode daily challenge...")
+        status_msg = await message.reply("🔍 Fetching today's LeetCode daily challenge...")
         daily = await leetcode_client.get_daily_challenge()
         if not daily:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
             await message.reply("❌ Failed to fetch daily challenge. Please try again later.")
             return
 
@@ -65,6 +69,10 @@ async def cmd_start(message: Message, command: CommandObject):
             f"💡 {html.italic('To get progressive hints for this problem, type:')}\n"
             f"`/hint {title_slug}`"
         )
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
         await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
         return
 
@@ -198,13 +206,18 @@ async def cmd_stats(message: Message):
         f"• Total registered users: {html.bold(stats['total_users'])}\n"
         f"• Linked LeetCode profiles: {html.bold(stats['total_linked'])}\n"
         f"• Verified LeetCode profiles: {html.bold(stats['total_verified'])}\n\n"
+        f"👥 {html.bold('Community:')}\n"
+        f"• Active groups: {html.bold(stats['total_groups'])}\n"
+        f"• Member channels: {html.bold(stats['total_channels'])}\n\n"
         f"⚔️ {html.bold('LeetCode Battles:')}\n"
         f"• Total battles: {html.bold(stats['total_battles'])}\n"
         f"• Active/Pending: {html.bold(stats['active_battles'])}\n"
         f"• Completed: {html.bold(stats['completed_battles'])}\n\n"
         f"🧠 {html.bold('Practice & SRS:')}\n"
         f"• Total solved problems: {html.bold(stats['total_solved'])}\n"
-        f"• Active Spaced Repetition items: {html.bold(stats['total_srs'])}"
+        f"• Active Spaced Repetition items: {html.bold(stats['total_srs'])}\n\n"
+        f"🔔 {html.bold('Reminders:')}\n"
+        f"• Users with reminders enabled: {html.bold(stats['reminder_users'])}"
     )
     await message.reply(stats_text, parse_mode="HTML")
 
@@ -495,6 +508,12 @@ async def on_my_chat_member_update(event: ChatMemberUpdated):
             f"👤 {html.bold('Added By:')} {actor_mention}"
         )
         await send_log(log_text)
+        # Track channel in DB
+        if chat_type == "channel":
+            try:
+                await db.record_bot_channel(chat_id, chat_title)
+            except Exception as e:
+                logger.error(f"Failed to record bot channel {chat_id}: {e}")
 
     elif was_removed:
         log_text = (
@@ -504,6 +523,26 @@ async def on_my_chat_member_update(event: ChatMemberUpdated):
             f"👤 {html.bold('Removed By:')} {actor_mention}"
         )
         await send_log(log_text)
+        # Remove channel from DB tracking
+        if chat_type == "channel":
+            try:
+                await db.remove_bot_channel(chat_id)
+            except Exception as e:
+                logger.error(f"Failed to remove bot channel {chat_id}: {e}")
+
+
+@router.channel_post()
+async def on_channel_post(message: Message):
+    """
+    Fallback tracker. Automatically records channel details into the DB
+    when any post is published in the channel.
+    """
+    chat_id = message.chat.id
+    chat_title = message.chat.title or "Unknown Channel"
+    try:
+        await db.record_bot_channel(chat_id, chat_title)
+    except Exception as e:
+        logger.error(f"Failed to record bot channel {chat_id} from channel post: {e}")
 
 
 def get_reminders_keyboard(daily: bool, streak: bool, contests: bool) -> InlineKeyboardMarkup:

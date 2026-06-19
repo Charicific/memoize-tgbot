@@ -24,6 +24,7 @@ from src.handlers import get_main_router
 from src.utils.formatters import clean_leetcode_html
 from src.middlewares.ban_middleware import BanCheckMiddleware
 from src.middlewares.maintenance_middleware import MaintenanceCheckMiddleware
+from src.middlewares.dot_command_middleware import DotCommandMiddleware
 
 
 # Configure logging
@@ -44,19 +45,24 @@ class GroupMemberMiddleware(BaseMiddleware):
             "group",
             "supergroup",
         ]:
-            if event.from_user:
+            user = event.from_user
+            if user:
+                # Skip Telegram's service account and any bots
+                if user.id == 777000 or user.is_bot:
+                    return await handler(event, data)
                 try:
                     await db.record_group_member(
                         group_id=event.chat.id,
-                        telegram_id=event.from_user.id,
-                        username=event.from_user.username,
-                        first_name=event.from_user.first_name,
+                        telegram_id=user.id,
+                        username=user.username,
+                        first_name=user.first_name,
                     )
                 except Exception as e:
                     logger.error(f"Error in GroupMemberMiddleware: {e}")
         return await handler(event, data)
 
 
+dp.message.outer_middleware(DotCommandMiddleware())
 dp.message.outer_middleware(GroupMemberMiddleware())
 dp.message.outer_middleware(BanCheckMiddleware())
 dp.message.outer_middleware(MaintenanceCheckMiddleware())
@@ -1131,29 +1137,8 @@ async def global_error_handler(event: ErrorEvent):
 
     logger.error(f"Unhandled exception in bot: {exception}", exc_info=exception)
 
-    # Extract update context
-    update_str = "Unknown Update"
-    try:
-        update_str = update.model_dump_json(indent=2)
-    except Exception:
-        update_str = str(update)
-
-    tb = "".join(
-        traceback.format_exception(type(exception), exception, exception.__traceback__)
-    )
-    if len(tb) > 2500:
-        tb = tb[:2500] + "\n...[truncated]"
-
-    error_msg = (
-        f"🚨 {html.bold('CRITICAL: Unhandled Exception in Bot')} 🚨\n\n"
-        f"⚠️ {html.bold('Error:')} {html.code(str(exception))}\n\n"
-        f"📂 {html.bold('Traceback:')}\n<pre><code class='language-python'>{html_escape(tb)}</code></pre>\n\n"
-        f"📥 {html.bold('Triggering Update:')}\n<pre><code class='language-json'>{html_escape(update_str[:1000])}</code></pre>"
-    )
-
-    from src.utils.logging_helper import send_log
-
-    await send_log(error_msg, pin=True, disable_notification=False)
+    from src.utils.logging_helper import send_error_log
+    await send_error_log(exception, context_label="Unhandled Exception in Bot", update=update)
 
 
 @asynccontextmanager

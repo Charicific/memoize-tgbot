@@ -29,10 +29,14 @@ async def cmd_daily(message: Message):
         await message.reply(cached, parse_mode="HTML", disable_web_page_preview=True)
         return
 
-    await message.reply("🔍 Fetching today's LeetCode daily challenge...")
+    status_msg = await message.reply("🔍 Fetching today's LeetCode daily challenge...")
 
     daily = await leetcode_client.get_daily_challenge()
     if not daily:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
         await message.reply("❌ Failed to fetch daily challenge. Please try again later.")
         return
 
@@ -64,6 +68,10 @@ async def cmd_daily(message: Message):
 
     # Cache daily challenge for 2 hours (daily challenges change once a day)
     await cache_manager.set(cache_key, response, expire_seconds=7200)
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
     await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -150,7 +158,7 @@ async def cmd_random(message: Message, command: CommandObject):
             else:
                 tag = arg_lower
 
-    await message.reply("🔍 Searching for a matching problem... Please wait.")
+    status_msg = await message.reply("🔍 Searching for a matching problem... Please wait.")
 
     # Fetch problemset questions
     questions = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty, tag_slug=tag)
@@ -159,6 +167,10 @@ async def cmd_random(message: Message, command: CommandObject):
     free_questions = [q for q in questions if not q.get("isPaidOnly")]
     
     if not free_questions:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
         await message.reply("❌ No matching free questions found. Try changing the filters.")
         return
 
@@ -177,6 +189,10 @@ async def cmd_random(message: Message, command: CommandObject):
         f"`/hint {q['titleSlug']}`"
     )
     
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
     await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
 
 

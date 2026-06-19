@@ -147,10 +147,14 @@ async def cmd_solved(message: Message, command: CommandObject):
             return
 
     # Interactive flow
-    await message.reply("🔍 Fetching your recent LeetCode accepted submissions...")
+    status_msg = await message.reply("🔍 Fetching your recent LeetCode accepted submissions...")
 
     submissions = await leetcode_client.get_recent_accepted_submissions(leetcode_username, limit=5)
     if not submissions:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
         await message.reply("❌ No recent accepted submissions found on your LeetCode profile. Make sure you solved a problem recently!")
         return
 
@@ -166,6 +170,10 @@ async def cmd_solved(message: Message, command: CommandObject):
         keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"srs_select:{idx}")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
     await message.reply("🎯 Which problem did you just solve and want to log for spaced repetition?", reply_markup=keyboard)
 
 

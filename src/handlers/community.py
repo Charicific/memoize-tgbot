@@ -596,11 +596,11 @@ async def cmd_battle(message: Message, command: CommandObject):
         filter_info = difficulty_str
         if tag_slug:
             filter_info += f" with tag: {tag_slug}"
-        await message.reply(f"🎲 Selecting a random {filter_info} problem... Please wait.")
+        progress_msg = await message.reply(f"🎲 Selecting a random {filter_info} problem... Please wait.")
         problems = await leetcode_client.get_problemset_questions(limit=100, difficulty=difficulty, tag_slug=tag_slug)
         free_problems = [p for p in problems if not p.get("isPaidOnly")]
         if not free_problems and tag_slug:
-            await message.reply(
+            await progress_msg.edit_text(
                 f"⚠️ Could not find any free problems with tag {html.code(tag_slug)} ({difficulty_str}).\n"
                 f"Selecting a random {difficulty_str} problem instead.",
                 parse_mode="HTML"
@@ -609,8 +609,12 @@ async def cmd_battle(message: Message, command: CommandObject):
             free_problems = [p for p in problems if not p.get("isPaidOnly")]
             tag_slug = None
         if not free_problems:
-            await message.reply("❌ Error picking a battle problem. Please try again.")
+            await progress_msg.edit_text("❌ Error picking a battle problem. Please try again.")
             return
+        try:
+            await progress_msg.delete()
+        except Exception:
+            pass
         selected_prob = random.choice(free_problems)
         problem_slug = selected_prob["titleSlug"]
         problem_title = selected_prob["title"]

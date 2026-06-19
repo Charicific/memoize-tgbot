@@ -1,8 +1,10 @@
+import io
 import logging
 import asyncio
+import datetime as dt
 from aiogram import Router, html
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 from src.services.supabase_db import db
 from src.services.redis_cache import cache_manager
 from src.utils.roles import RoleFilter, UserRole, get_user_role
@@ -79,51 +81,181 @@ async def cmd_maintenance(message: Message, command: CommandObject):
     else:
         await message.reply("⚠️ Usage: `/maintenance [on/off]`", parse_mode="HTML")
 
-@router.message(Command("broadcast"), RoleFilter(UserRole.SUPER_ADMIN))
-async def cmd_broadcast(message: Message, command: CommandObject):
-    """
-    Broadcasts HTML message to all registered users in private DMs.
-    """
-    if not command.args:
-        await message.reply("⚠️ Usage: `/broadcast <message>`", parse_mode="HTML")
-        return
 
-    broadcast_msg = command.args.strip()
+async def _resolve_failed_chat_info(bot, chat_id: int, chat_lookup: dict):
+    # Check lookup first
+    info = chat_lookup.get(chat_id)
+    if info:
+        return info["type"], info["name"], info["username"]
 
-    # Get all registered user IDs from database
-    rows = await db.fetch("SELECT telegram_id FROM users")
-    user_ids = [r["telegram_id"] for r in rows]
-
-    await message.reply(f"🚀 Starting broadcast to {len(user_ids)} users. Please wait...")
-
-    success = 0
-    fail = 0
-
-    # Batch sending to prevent rate limits: 30 per second
-    for i, user_id in enumerate(user_ids):
+    # Check type by ID sign
+    if chat_id > 0:
+        return "User", "Unknown User", None
+    else:
+        # Fallback to get_chat or database check
         try:
-            await message.bot.send_message(
-                chat_id=user_id,
-                text=broadcast_msg,
-                parse_mode="HTML"
-            )
+            chat = await bot.get_chat(chat_id)
+            chat_type = chat.type.capitalize()  # "Supergroup", "Group", "Channel"
+            title = chat.title
+            username = chat.username
+            return chat_type, title, username
+        except Exception:
+            # Fallback if get_chat fails (bot was kicked)
+            # If not in lookup, assume it was a Group unless it's a known channel
+            return "Group/Channel (Kicked)", "Unknown Title", None
+
+
+async def _run_broadcast(
+    bot,
+    message,
+    broadcast_msg: str,
+    chat_ids: list,
+    scope_label: str,
+):
+    """
+    Core broadcast sender. Sends to all chat_ids, collects failures,
+    and DMs the super admin a detailed failure report .txt file.
+    """
+    success = 0
+    failures = []  # list of (chat_id, reason)
+
+    for i, chat_id in enumerate(chat_ids):
+        try:
+            await bot.send_message(chat_id=chat_id, text=broadcast_msg, parse_mode="HTML")
             success += 1
         except Exception as err:
-            logger.debug(f"Failed broadcast to {user_id}: {err}")
-            fail += 1
+            logger.debug(f"Broadcast failed to {chat_id}: {err}")
+            failures.append((chat_id, str(err)))
 
-        # Rate limit control: sleep 1.0s every 30 messages
+        # Rate limit: 30 messages per second
         if (i + 1) % 30 == 0:
             await asyncio.sleep(1.0)
         else:
             await asyncio.sleep(0.035)
 
+    fail_count = len(failures)
+
+    # Send completion summary
     await message.reply(
-        f"📢 {html.bold('Broadcast Complete!')}\n\n"
+        f"📢 {html.bold('Broadcast Complete!')} ({scope_label})\n\n"
         f"✅ Success: {success}\n"
-        f"❌ Failed/Blocked: {fail}",
-        parse_mode="HTML"
+        f"❌ Failed: {fail_count}",
+        parse_mode="HTML",
     )
+
+    # Build and DM failure report if any failures
+    if failures:
+        # Build lookup map of chat details from DB
+        db_users = []
+        db_channels = []
+        try:
+            db_users = await db.fetch("SELECT telegram_id, username, first_name FROM users")
+            db_channels = await db.fetch("SELECT channel_id, title FROM bot_channels")
+        except Exception as e:
+            logger.error(f"Failed to fetch broadcast target details from DB: {e}")
+
+        chat_lookup = {}
+        for r in db_users:
+            chat_lookup[r["telegram_id"]] = {
+                "type": "User",
+                "name": r["first_name"],
+                "username": r["username"],
+            }
+        for r in db_channels:
+            chat_lookup[r["channel_id"]] = {
+                "type": "Channel",
+                "name": r["title"],
+                "username": None,
+            }
+
+        now_str = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        initiator = f"@{message.from_user.username}" if message.from_user.username else str(message.from_user.id)
+        lines = [
+            "BROADCAST FAILURE REPORT",
+            "=" * 40,
+            f"Command scope : {scope_label}",
+            f"Initiated by  : {initiator} ({message.from_user.id})",
+            f"Timestamp     : {now_str}",
+            f"Total targets : {len(chat_ids)}",
+            f"Successful    : {success}",
+            f"Failed        : {fail_count}",
+            "",
+            "FAILED CHATS:",
+        ]
+        for chat_id, reason in failures:
+            chat_type, chat_name, chat_username = await _resolve_failed_chat_info(bot, chat_id, chat_lookup)
+            lines += [
+                "---",
+                f"Chat ID   : {chat_id}",
+                f"Type      : {chat_type}",
+                f"Name      : {chat_name or 'N/A'}",
+                f"Username  : {f'@{chat_username}' if chat_username else 'None'}",
+                f"Reason    : {reason}",
+            ]
+        lines.append("---")
+        report_bytes = "\n".join(lines).encode("utf-8")
+
+        for admin_id in settings.super_admin_ids:
+            try:
+                await bot.send_document(
+                    chat_id=admin_id,
+                    document=BufferedInputFile(report_bytes, filename=f"broadcast_failures_{now_str[:10]}.txt"),
+                    caption=f"📋 Broadcast failure report — {fail_count} failed chats ({scope_label})",
+                )
+            except Exception as e:
+                logger.error(f"Failed to DM failure report to super admin {admin_id}: {e}")
+
+
+@router.message(Command("pbroadcast"), RoleFilter(UserRole.SUPER_ADMIN))
+async def cmd_pbroadcast(message: Message, command: CommandObject):
+    """Broadcasts to all personal DM users (private chats only)."""
+    if not command.args:
+        await message.reply("⚠️ Usage: <code>/pbroadcast &lt;message&gt;</code>", parse_mode="HTML")
+        return
+    rows = await db.fetch("SELECT telegram_id FROM users")
+    chat_ids = [r["telegram_id"] for r in rows]
+    await message.reply(f"🚀 Starting personal DM broadcast to {len(chat_ids)} users...")
+    await _run_broadcast(message.bot, message, command.args.strip(), chat_ids, "Personal DMs")
+
+
+@router.message(Command("gbroadcast"), RoleFilter(UserRole.SUPER_ADMIN))
+async def cmd_gbroadcast(message: Message, command: CommandObject):
+    """Broadcasts to all groups the bot is active in."""
+    if not command.args:
+        await message.reply("⚠️ Usage: <code>/gbroadcast &lt;message&gt;</code>", parse_mode="HTML")
+        return
+    rows = await db.fetch("SELECT DISTINCT group_id FROM group_members")
+    chat_ids = [r["group_id"] for r in rows]
+    await message.reply(f"🚀 Starting group broadcast to {len(chat_ids)} groups...")
+    await _run_broadcast(message.bot, message, command.args.strip(), chat_ids, "Groups")
+
+
+@router.message(Command("cbroadcast"), RoleFilter(UserRole.SUPER_ADMIN))
+async def cmd_cbroadcast(message: Message, command: CommandObject):
+    """Broadcasts to all channels the bot is a member of."""
+    if not command.args:
+        await message.reply("⚠️ Usage: <code>/cbroadcast &lt;message&gt;</code>", parse_mode="HTML")
+        return
+    chat_ids = await db.get_all_channels()
+    await message.reply(f"🚀 Starting channel broadcast to {len(chat_ids)} channels...")
+    await _run_broadcast(message.bot, message, command.args.strip(), chat_ids, "Channels")
+
+
+@router.message(Command("broadcast"), RoleFilter(UserRole.SUPER_ADMIN))
+async def cmd_broadcast(message: Message, command: CommandObject):
+    """Broadcasts to ALL chats — personal DMs, groups, and channels."""
+    if not command.args:
+        await message.reply("⚠️ Usage: <code>/broadcast &lt;message&gt;</code>", parse_mode="HTML")
+        return
+    user_rows = await db.fetch("SELECT telegram_id FROM users")
+    group_rows = await db.fetch("SELECT DISTINCT group_id FROM group_members")
+    channel_ids = await db.get_all_channels()
+    # Deduplicate
+    all_ids = list({r["telegram_id"] for r in user_rows}
+                   | {r["group_id"] for r in group_rows}
+                   | set(channel_ids))
+    await message.reply(f"🚀 Starting universal broadcast to {len(all_ids)} chats (users + groups + channels)...")
+    await _run_broadcast(message.bot, message, command.args.strip(), all_ids, "All Chats")
 
 @router.message(Command("pban"), RoleFilter(UserRole.COORDINATOR))
 async def cmd_pban(message: Message, command: CommandObject):
