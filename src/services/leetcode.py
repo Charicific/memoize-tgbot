@@ -1,7 +1,9 @@
 import logging
 import random
 import httpx
+import difflib
 from typing import Optional, Dict, List, Any
+from groq import AsyncGroq
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,9 @@ class LeetCodeClient:
                 logger.info(f"Initialized proxy client for: {proxy}")
             except Exception as e:
                 logger.error(f"Error initializing proxy client for {proxy}: {e}")
+
+        # Initialize Groq client for fuzzy typo corrections
+        self.groq_client = AsyncGroq(api_key=settings.GROQ_API_KEY)
 
     async def close(self):
         for client in self.clients:
@@ -120,8 +125,9 @@ class LeetCodeClient:
 
     async def get_recent_accepted_submissions(self, username: str, limit: int = 15) -> List[Dict[str, Any]]:
         """
-        Fetches the user's recent accepted submissions.
+        Fetches the user's recent accepted submissions and enriches them with question numbers and difficulties in parallel.
         """
+        import asyncio
         query = """
         query getRecentSubmissions($username: String!, $limit: Int!) {
           recentAcSubmissionList(username: $username, limit: $limit) {
@@ -135,7 +141,28 @@ class LeetCodeClient:
         data = await self._query(query, {"username": username, "limit": limit})
         if not data or not data.get("recentAcSubmissionList"):
             return []
-        return data["recentAcSubmissionList"]
+        
+        submissions = data["recentAcSubmissionList"]
+        
+        # Parallel enrichment to resolve frontendQuestionId and difficulty
+        async def enrich_sub(sub):
+            try:
+                details = await self.get_problem_details(sub["titleSlug"])
+                if details:
+                    sub["frontendQuestionId"] = details.get("questionFrontendId", "")
+                    sub["difficulty"] = details.get("difficulty", "Medium")
+                else:
+                    sub["frontendQuestionId"] = ""
+                    sub["difficulty"] = "Medium"
+            except Exception as e:
+                logger.error(f"Error enriching submission for {sub.get('titleSlug')}: {e}")
+                sub["frontendQuestionId"] = ""
+                sub["difficulty"] = "Medium"
+            return sub
+
+        tasks = [enrich_sub(sub) for sub in submissions]
+        enriched_submissions = await asyncio.gather(*tasks)
+        return enriched_submissions
 
     async def get_daily_challenge(self) -> Optional[Dict[str, Any]]:
         """
@@ -274,3 +301,121 @@ class LeetCodeClient:
         if not data or not data.get("matchedUser"):
             return None
         return data["matchedUser"].get("userCalendar")
+
+    async def search_questions(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Searches LeetCode for questions matching a given keyword query using searchKeywords.
+        """
+        graphql_query = """
+        query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+          problemsetQuestionList: questionList(
+            categorySlug: $categorySlug
+            limit: $limit
+            skip: $skip
+            filters: $filters
+          ) {
+            totalNum
+            questions: data {
+              frontendQuestionId: questionFrontendId
+              title
+              titleSlug
+              difficulty
+              isPaidOnly
+            }
+          }
+        }
+        """
+        filters = {"searchKeywords": query}
+        data = await self._query(graphql_query, {
+            "categorySlug": "",
+            "limit": limit,
+            "skip": 0,
+            "filters": filters
+        })
+        if not data or not data.get("problemsetQuestionList"):
+            return []
+        return data["problemsetQuestionList"].get("questions", [])
+
+    async def resolve_problem_query(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Tries to resolve a problem search query (number, slug, or title) into a list of matches.
+        - If query is a digit (e.g. "1"), searches and returns exact match where frontendQuestionId matches.
+        - Otherwise, tries direct slug resolution (replacing spaces with hyphens, lowercase).
+        - If direct slug is invalid, falls back to search_questions fuzzy results.
+        - If fuzzy search results do not contain any close matches, falls back to Groq AI typo correction.
+        """
+        cleaned_query = query.strip()
+        if not cleaned_query:
+            return []
+
+        # 1. Check if it's a number
+        if cleaned_query.isdigit():
+            # Search for the number
+            results = await self.search_questions(cleaned_query, limit=10)
+            exact_matches = [q for q in results if q.get("frontendQuestionId") == cleaned_query]
+            if exact_matches:
+                return exact_matches
+            return results
+
+        # 2. Try direct titleSlug matching (replace spaces with hyphens)
+        potential_slug = cleaned_query.lower().replace(" ", "-")
+        # Clean double hyphens if any
+        while "--" in potential_slug:
+            potential_slug = potential_slug.replace("--", "-")
+        
+        try:
+            # Check if this slug is valid
+            details = await self.get_problem_details(potential_slug)
+            if details:
+                return [{
+                    "frontendQuestionId": details.get("questionFrontendId", ""),
+                    "title": details.get("title", ""),
+                    "titleSlug": details.get("titleSlug", ""),
+                    "difficulty": details.get("difficulty", "Medium"),
+                    "isPaidOnly": details.get("isPaidOnly", False)
+                }]
+        except Exception:
+            pass
+
+        # 3. Fallback to fuzzy search
+        results = await self.search_questions(cleaned_query, limit=5)
+
+        # Check if we have a strong textual similarity match (ratio >= 0.6)
+        has_strong_match = False
+        for q in results:
+            ratio = difflib.SequenceMatcher(None, cleaned_query.lower(), q["title"].lower()).ratio()
+            if ratio >= 0.6:
+                has_strong_match = True
+                break
+
+        # If we have a strong match, or if LeetCode search returned nothing, return what we have
+        if has_strong_match or not results:
+            return results
+
+        # 4. Fallback to Groq AI typo correction
+        try:
+            prompt = f"""
+You are an expert LeetCode problem matcher. A user typed the following search query representing a LeetCode problem, which may contain typos, misspellings, or poor spacing:
+"{cleaned_query}"
+
+Analyze this query and return ONLY the most likely official LeetCode problem name (e.g. "Two Sum", "3Sum", "Median of Two Sorted Arrays"). If it is a number, return the number.
+Do not include any greeting, explanation, markdown formatting, or quotes. Just output the corrected name.
+"""
+            chat_completion = await self.groq_client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "You are a helpful LeetCode problem matching assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                model="llama-3.3-70b-versatile",
+                temperature=0.0
+            )
+            corrected = chat_completion.choices[0].message.content.strip().replace('"', '')
+            if corrected and corrected.lower() != cleaned_query.lower():
+                logger.info(f"Fuzzy typo query '{cleaned_query}' corrected by AI to '{corrected}'")
+                corrected_results = await self.search_questions(corrected, limit=5)
+                if corrected_results:
+                    return corrected_results
+        except Exception as e:
+            logger.error(f"Error resolving query via AI typo correction: {e}")
+
+        return results
