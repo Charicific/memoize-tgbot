@@ -146,7 +146,7 @@ Diagnostic and monitoring tools for system coordinators.
 
 *   `/ping`
     *   **Arguments:** None.
-    *   **Explanation:** Measures the bot's API response time and database query latency. Requires `COORDINATOR` or higher.
+    *   **Explanation:** Measures the bot's API response time, database query latency, and total uptime from the last restart. Requires `COORDINATOR` or higher.
 *   `/stats`
     *   **Arguments:** None.
     *   **Explanation:** Displays global system usage statistics (registered users, verified users, active/completed battles, and SRS items). Requires `COORDINATOR` or higher.

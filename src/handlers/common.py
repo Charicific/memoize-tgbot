@@ -12,6 +12,7 @@ from src.services.redis_cache import cache_manager
 from src.utils.logging_helper import send_log
 from src.utils.formatters import clean_leetcode_html
 from src.utils.roles import RoleFilter, UserRole
+from src.utils.uptime import get_uptime_string
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -169,11 +170,15 @@ async def cmd_ping(message: Message):
     sent_msg = await message.reply("🏓 Ponging...")
     tg_latency = int((time.time() - start_tg) * 1000)
 
+    # Get Bot Uptime
+    uptime = get_uptime_string()
+
     # Edit message with final metrics
     status_text = (
         f"🏓 {html.bold('Pong!')}\n\n"
         f"⚡ {html.bold('Telegram Bot API:')} {tg_latency}ms\n"
-        f"💾 {html.bold('Database Latency:')} {db_latency}"
+        f"💾 {html.bold('Database Latency:')} {db_latency}\n"
+        f"⏰ {html.bold('Bot Uptime:')} {uptime}"
     )
     await sent_msg.edit_text(status_text, parse_mode="HTML")
 
