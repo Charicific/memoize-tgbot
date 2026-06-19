@@ -616,9 +616,13 @@ async def check_srs_reviews():
                     f"Solve them and use `/solved` to log your review quality and update schedules!\n\n"
                     f"Let's maintain your learning streak! 💪"
                 )
+                reminder_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="📋 View Reviews Queue", callback_data="cmd_reviews")
+                ]])
                 try:
                     await bot.send_message(
-                        chat_id=user_id, text=reminder_msg, parse_mode="HTML"
+                        chat_id=user_id, text=reminder_msg, parse_mode="HTML",
+                        reply_markup=reminder_keyboard
                     )
                     await cache_manager.set(sent_cache_key, "1", expire_seconds=86400)
                     await asyncio.sleep(0.05)

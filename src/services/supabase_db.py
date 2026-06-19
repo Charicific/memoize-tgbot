@@ -276,12 +276,34 @@ class SupabaseDB:
 
     async def get_due_srs_reviews(self, telegram_id: int) -> List[Dict[str, Any]]:
         query = """
-        SELECT * FROM srs_reviews
-        WHERE telegram_id = $1 AND next_review_date::date <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date
-        ORDER BY next_review_date ASC
+        SELECT r.*, h.problem_title, h.difficulty
+        FROM srs_reviews r
+        LEFT JOIN problem_history h ON r.telegram_id = h.telegram_id AND r.problem_slug = h.problem_slug
+        WHERE r.telegram_id = $1 AND r.next_review_date::date <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date
+        ORDER BY r.next_review_date ASC
         """
         rows = await self.fetch(query, telegram_id)
         return [dict(r) for r in rows]
+
+    async def get_user_srs_reviews(self, telegram_id: int) -> List[Dict[str, Any]]:
+        query = """
+        SELECT r.*, h.problem_title, h.difficulty
+        FROM srs_reviews r
+        LEFT JOIN problem_history h ON r.telegram_id = h.telegram_id AND r.problem_slug = h.problem_slug
+        WHERE r.telegram_id = $1
+        ORDER BY r.next_review_date ASC
+        """
+        rows = await self.fetch(query, telegram_id)
+        return [dict(r) for r in rows]
+
+    async def delete_srs_review(self, telegram_id: int, problem_slug: str) -> bool:
+        query = """
+        DELETE FROM srs_reviews
+        WHERE telegram_id = $1 AND problem_slug = $2
+        RETURNING *
+        """
+        row = await self.fetchrow(query, telegram_id, problem_slug)
+        return row is not None
 
     # --- Battles ---
     async def create_battle(self, challenger_id: int, opponent_id: int, problem_slug: str, problem_title: str, difficulty: str, expires_at: datetime.datetime) -> Dict[str, Any]:
