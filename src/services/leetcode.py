@@ -144,21 +144,23 @@ class LeetCodeClient:
         
         submissions = data["recentAcSubmissionList"]
         
-        # Parallel enrichment to resolve frontendQuestionId and difficulty
+        # Parallel enrichment to resolve frontendQuestionId and difficulty with concurrency limit
+        sem = asyncio.Semaphore(3)
         async def enrich_sub(sub):
-            try:
-                details = await self.get_problem_details(sub["titleSlug"])
-                if details:
-                    sub["frontendQuestionId"] = details.get("questionFrontendId", "")
-                    sub["difficulty"] = details.get("difficulty", "Medium")
-                else:
+            async with sem:
+                try:
+                    details = await self.get_problem_details(sub["titleSlug"])
+                    if details:
+                        sub["frontendQuestionId"] = details.get("questionFrontendId", "")
+                        sub["difficulty"] = details.get("difficulty", "Medium")
+                    else:
+                        sub["frontendQuestionId"] = ""
+                        sub["difficulty"] = "Medium"
+                except Exception as e:
+                    logger.error(f"Error enriching submission for {sub.get('titleSlug')}: {e}")
                     sub["frontendQuestionId"] = ""
                     sub["difficulty"] = "Medium"
-            except Exception as e:
-                logger.error(f"Error enriching submission for {sub.get('titleSlug')}: {e}")
-                sub["frontendQuestionId"] = ""
-                sub["difficulty"] = "Medium"
-            return sub
+                return sub
 
         tasks = [enrich_sub(sub) for sub in submissions]
         enriched_submissions = await asyncio.gather(*tasks)
@@ -197,6 +199,14 @@ class LeetCodeClient:
         """
         Fetches problem description, difficulties, topic tags, and code snippets.
         """
+        try:
+            from src.services.redis_cache import cache_manager
+            cached = await cache_manager.get(f"problem_details:{title_slug}")
+            if cached and isinstance(cached, dict):
+                return cached
+        except Exception as e:
+            logger.error(f"Error reading problem_details cache for {title_slug}: {e}")
+
         query = """
         query questionData($titleSlug: String!) {
           question(titleSlug: $titleSlug) {
@@ -221,7 +231,15 @@ class LeetCodeClient:
         data = await self._query(query, {"titleSlug": title_slug})
         if not data or not data.get("question"):
             return None
-        return data["question"]
+        
+        details = data["question"]
+        try:
+            from src.services.redis_cache import cache_manager
+            await cache_manager.set(f"problem_details:{title_slug}", details, expire_seconds=604800)
+        except Exception as e:
+            logger.error(f"Error writing problem_details cache for {title_slug}: {e}")
+
+        return details
 
     async def get_problemset_questions(self, limit: int = 50, skip: int = 0, difficulty: Optional[str] = None, tag_slug: Optional[str] = None) -> List[Dict[str, Any]]:
         """

@@ -1,4 +1,5 @@
 import logging
+import datetime
 from aiogram import Router, F, html
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -11,6 +12,37 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 leetcode_client = LeetCodeClient()
+
+async def log_and_send_srs_success(message_or_callback, user_id: int, problem_slug: str, problem_title: str, difficulty: str, quality: int):
+    # Record solved problem & srs review
+    await db.record_solved_problem(user_id, problem_slug, problem_title, difficulty)
+    record = await srs_service.log_review(user_id, problem_slug, quality)
+    await db.add_xp_coins(user_id, xp=15, coins=5)
+
+    next_date = record["next_review_date"]
+    if isinstance(next_date, str):
+        try:
+            next_date = datetime.datetime.fromisoformat(next_date.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+
+    next_date_str = next_date.strftime("%d %b %Y, %I:%M %p") if hasattr(next_date, "strftime") else str(next_date)
+
+    success_msg = (
+        f"✅ {html.bold('Review Logged successfully!')}\n\n"
+        f"🏆 Problem: {html.bold(problem_title)}\n"
+        f"📊 Recall Quality: {quality}/5\n"
+        f"📅 Next Review Due: {html.code(next_date_str)}\n"
+        f"🔁 Interval Scheduled: {html.bold(record['interval'])} day(s)\n"
+        f"📈 Ease Factor: {record['ease_factor']:.2f}\n\n"
+        f"🎁 Awarded {html.bold('15 XP')} and {html.bold('5 coins')}!"
+    )
+    
+    if isinstance(message_or_callback, Message):
+        await message_or_callback.reply(success_msg, parse_mode="HTML")
+    elif isinstance(message_or_callback, CallbackQuery):
+        await message_or_callback.message.edit_text(success_msg, parse_mode="HTML")
+
 
 @router.message(Command("solved"))
 async def cmd_solved(message: Message, command: CommandObject):
@@ -28,37 +60,57 @@ async def cmd_solved(message: Message, command: CommandObject):
 
     leetcode_username = link["leetcode_username"]
 
-    # Optional manual logging: /solved <problem_slug> <quality>
+    # Manual logging: /solved <problem_query> <quality>
     if command.args:
         parts = command.args.split()
-        if len(parts) == 2:
-            problem_slug = parts[0].strip()
+        if len(parts) >= 2:
             try:
-                quality = int(parts[1])
+                quality = int(parts[-1])
                 if not (0 <= quality <= 5):
                     raise ValueError()
             except ValueError:
                 await message.reply("⚠️ Quality must be an integer between 0 and 5.")
                 return
 
-            await message.reply("⏳ Logging your solved problem... Please wait.")
-            # Fetch problem details to get title and difficulty
-            problem = await leetcode_client.get_problem_details(problem_slug)
-            if not problem:
-                await message.reply(f"❌ Could not find LeetCode problem with slug {html.code(problem_slug)}.", parse_mode="HTML")
+            problem_query = " ".join(parts[:-1]).strip()
+            status_msg = await message.reply(f"⏳ Searching LeetCode for '{problem_query}'...")
+
+            # Resolve query using fuzzy/number search resolver
+            matches = await leetcode_client.resolve_problem_query(problem_query)
+            if not matches:
+                await status_msg.edit_text(f"❌ Could not find any problems matching '{problem_query}'.")
                 return
 
-            # Record in problem history and SRS
-            await db.record_solved_problem(user_id, problem_slug, problem["title"], problem["difficulty"])
-            await srs_service.log_review(user_id, problem_slug, quality)
-            await db.add_xp_coins(user_id, xp=15, coins=5)
+            if len(matches) == 1:
+                # Exact match
+                problem = matches[0]
+                problem_slug = problem["titleSlug"]
+                problem_title = problem["title"]
+                
+                # Retrieve full details for difficulty if missing
+                difficulty = problem.get("difficulty")
+                if not difficulty:
+                    full_details = await leetcode_client.get_problem_details(problem_slug)
+                    difficulty = full_details["difficulty"] if full_details else "Medium"
+                
+                await status_msg.delete()
+                await log_and_send_srs_success(message, user_id, problem_slug, problem_title, difficulty, quality)
+                return
 
-            await message.reply(
-                f"✅ Successfully logged review for {html.bold(problem['title'])}!\n"
-                f"🧠 SM-2 quality: {quality}/5\n"
-                f"🎁 Awarded 15 XP and 5 coins.",
-                parse_mode="HTML"
-            )
+            # Multiple matches - show selection menu
+            await status_msg.delete()
+            # Cache the matches and quality rating in Redis
+            cache_data = {"quality": quality, "matches": matches}
+            cache_key = f"solved_search:{user_id}"
+            await cache_manager.set(cache_key, cache_data, expire_seconds=600)
+
+            keyboard_buttons = []
+            for idx, q in enumerate(matches[:5]):
+                button_text = f"🏆 {q['frontendQuestionId']}. {q['title']}"
+                keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"solved_select:{idx}")])
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+            await message.reply(f"🔍 Multiple matching problems found for '{problem_query}'. Please select one to log with rating {quality}/5:", reply_markup=keyboard)
             return
 
     # Interactive flow
@@ -73,10 +125,11 @@ async def cmd_solved(message: Message, command: CommandObject):
     cache_key = f"recent_subs:{user_id}"
     await cache_manager.set(cache_key, submissions, expire_seconds=600)
 
-    # Build keyboard
+    # Build keyboard showing problem numbers and titles
     keyboard_buttons = []
     for idx, sub in enumerate(submissions):
-        button_text = f"🏆 {sub['title']}"
+        num_prefix = f"{sub.get('frontendQuestionId')}. " if sub.get('frontendQuestionId') else ""
+        button_text = f"🏆 {num_prefix}{sub['title']}"
         keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"srs_select:{idx}")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
@@ -161,30 +214,35 @@ async def process_srs_rate(callback_query: CallbackQuery):
     problem = await leetcode_client.get_problem_details(problem_slug)
     difficulty = problem["difficulty"] if problem else "Medium"
 
-    # Record solved problem & srs review
-    await db.record_solved_problem(user_id, problem_slug, problem_title, difficulty)
-    record = await srs_service.log_review(user_id, problem_slug, quality)
-    await db.add_xp_coins(user_id, xp=15, coins=5)
+    await log_and_send_srs_success(callback_query, user_id, problem_slug, problem_title, difficulty, quality)
+    await callback_query.answer("Review Logged!")
 
-    next_date = record["next_review_date"]
-    if isinstance(next_date, str):
-        # Parse datetime if string
-        try:
-            next_date = datetime.datetime.fromisoformat(next_date.replace("Z", "+00:00"))
-        except ValueError:
-            pass
 
-    next_date_str = next_date.strftime("%d %b %Y, %I:%M %p") if hasattr(next_date, "strftime") else str(next_date)
+@router.callback_query(F.data.startswith("solved_select:"))
+async def process_solved_select(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    idx = int(callback_query.data.split(":")[1])
 
-    success_msg = (
-        f"✅ {html.bold('Review Logged successfully!')}\n\n"
-        f"🏆 Problem: {html.bold(problem_title)}\n"
-        f"📊 Recall Quality: {quality}/5\n"
-        f"📅 Next Review Due: {html.code(next_date_str)}\n"
-        f"🔁 Interval Scheduled: {html.bold(record['interval'])} day(s)\n"
-        f"📈 Ease Factor: {record['ease_factor']:.2f}\n\n"
-        f"🎁 Awarded {html.bold('15 XP')} and {html.bold('5 coins')}!"
-    )
-    
-    await callback_query.message.edit_text(success_msg, parse_mode="HTML")
+    # Retrieve cached quality and matches
+    cache_key = f"solved_search:{user_id}"
+    cache_data = await cache_manager.get(cache_key)
+
+    if not cache_data or idx >= len(cache_data.get("matches", [])):
+        await callback_query.answer("⚠️ Session expired. Please run /solved <problem> <quality> again.", show_alert=True)
+        return
+
+    quality = cache_data["quality"]
+    selected_prob = cache_data["matches"][idx]
+    problem_slug = selected_prob["titleSlug"]
+    problem_title = selected_prob["title"]
+
+    await callback_query.message.edit_text("⏳ Processing review scheduling...")
+
+    # Fetch full details for difficulty if missing
+    difficulty = selected_prob.get("difficulty")
+    if not difficulty:
+        full_details = await leetcode_client.get_problem_details(problem_slug)
+        difficulty = full_details["difficulty"] if full_details else "Medium"
+
+    await log_and_send_srs_success(callback_query, user_id, problem_slug, problem_title, difficulty, quality)
     await callback_query.answer("Review Logged!")

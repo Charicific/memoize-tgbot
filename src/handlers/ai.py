@@ -11,6 +11,39 @@ logger = logging.getLogger(__name__)
 
 leetcode_client = LeetCodeClient()
 
+async def generate_and_send_hints(message: Message, user_id: int, problem: dict):
+    problem_slug = problem["titleSlug"]
+    title = problem["title"]
+    description = problem["content"]
+    code_templates = "\n".join([f"{item['lang']}:\n{item['code']}" for item in problem.get("codeSnippets", [])])
+
+    hints = await ai_service.generate_progressive_hints(title, description, code_templates)
+    if not hints:
+        await message.reply("❌ Error generating hints. Please try again later.")
+        return
+
+    # Cache hints
+    cache_key = f"hints:{user_id}:{problem_slug}"
+    await cache_manager.set(cache_key, list(hints), expire_seconds=1800)
+
+    # Show Hint 1
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💡 Get Hint 2", callback_data=f"ai_hint:{problem_slug}:2")]
+    ])
+
+    num_prefix = ""
+    if problem.get("questionFrontendId"):
+        num_prefix = f"{problem['questionFrontendId']}. "
+
+    await message.reply(
+        f"🤖 {html.bold('Progressive Hints for ' + num_prefix + title)}\n\n"
+        f"💡 {html.bold('Hint 1 (Conceptual):')}\n"
+        f"{hints[0]}",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
 @router.message(Command("hint"))
 async def cmd_hint(message: Message, command: CommandObject):
     user_id = message.from_user.id
@@ -19,45 +52,59 @@ async def cmd_hint(message: Message, command: CommandObject):
         return
 
     if not command.args:
-        await message.reply("⚠️ Please specify the problem slug:\nExample: `/hint two-sum`", parse_mode="HTML")
+        await message.reply("⚠️ Please specify the LeetCode problem (number or title):\nExample: `/hint 1` or `/hint two sum`", parse_mode="HTML")
         return
 
-    problem_slug = command.args.strip()
-    await message.reply(f"🤖 Fetching problem '{problem_slug}' and compiling AI hints...")
+    problem_query = command.args.strip()
+    status_msg = await message.reply(f"🤖 Searching LeetCode for '{problem_query}'...")
 
-    # Fetch problem details from LeetCode
+    # Resolve using fuzzy/number search resolver
+    matches = await leetcode_client.resolve_problem_query(problem_query)
+    if not matches:
+        await status_msg.edit_text(f"❌ Could not find any problems matching '{problem_query}'.")
+        return
+
+    if len(matches) == 1:
+        # Exact match
+        problem_slug = matches[0]["titleSlug"]
+        # Fetch detailed problem details to generate hints
+        problem = await leetcode_client.get_problem_details(problem_slug)
+        if not problem:
+            await status_msg.edit_text("❌ Could not retrieve problem details from LeetCode.")
+            return
+        await status_msg.delete()
+        await generate_and_send_hints(message, user_id, problem)
+        return
+
+    # Multiple matches - show selection menu
+    await status_msg.delete()
+    keyboard_buttons = []
+    for q in matches[:5]:
+        button_text = f"💡 {q['frontendQuestionId']}. {q['title']}"
+        keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"hint_select:{q['titleSlug']}")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    await message.reply(f"🔍 Multiple matching problems found for '{problem_query}'. Please select one:", reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("hint_select:"))
+async def process_hint_select(callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    problem_slug = callback_query.data.split(":")[1]
+
+    if await cache_manager.is_rate_limited(user_id, "hint", limit=5, period=60):
+        await callback_query.answer("⚠️ AI limits exceeded. Please wait 1 minute.", show_alert=True)
+        return
+
+    # Fetch detailed problem details
     problem = await leetcode_client.get_problem_details(problem_slug)
     if not problem:
-        await message.reply("❌ Could not find the problem on LeetCode. Please double-check the slug.")
+        await callback_query.answer("❌ Could not retrieve problem details.", show_alert=True)
         return
 
-    # Extract info
-    title = problem["title"]
-    description = problem["content"]
-    code_templates = "\n".join([f"{item['lang']}:\n{item['code']}" for item in problem.get("codeSnippets", [])])
-
-    # Call AI service
-    hints = await ai_service.generate_progressive_hints(title, description, code_templates)
-    if not hints:
-        await message.reply("❌ Error generating hints. Please try again later.")
-        return
-
-    # Cache hints: a tuple (hint1, hint2, hint3)
-    cache_key = f"hints:{user_id}:{problem_slug}"
-    await cache_manager.set(cache_key, list(hints), expire_seconds=1800) # Cache for 30 minutes
-
-    # Show Hint 1
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💡 Get Hint 2", callback_data=f"ai_hint:{problem_slug}:2")]
-    ])
-
-    await message.reply(
-        f"🤖 {html.bold('Progressive Hints for ' + title)}\n\n"
-        f"💡 {html.bold('Hint 1 (Conceptual):')}\n"
-        f"{hints[0]}",
-        reply_markup=keyboard,
-        parse_mode="HTML"
-    )
+    await callback_query.message.delete()
+    await generate_and_send_hints(callback_query.message, user_id, problem)
+    await callback_query.answer()
 
 
 @router.callback_query(F.data.startswith("ai_hint:"))
