@@ -2,6 +2,7 @@ import logging
 import datetime
 import random
 import asyncio
+from typing import Optional
 from aiogram import Router, F, html
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
