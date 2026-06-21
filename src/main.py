@@ -70,10 +70,13 @@ dp.callback_query.outer_middleware(BanCheckMiddleware())
 dp.callback_query.outer_middleware(MaintenanceCheckMiddleware())
 
 
+from apscheduler.jobstores.memory import MemoryJobStore
+
 # Initialize Scheduler
-# SQLAlchemyJobStore persists jobs into Postgres so they survive restarts
+# MemoryJobStore handles static startup jobs (default). SQLAlchemyJobStore persists dynamic one-off alerts (db).
 jobstores = {
-    "default": SQLAlchemyJobStore(
+    "default": MemoryJobStore(),
+    "db": SQLAlchemyJobStore(
         url=settings.SUPABASE_DB_URL.replace("postgresql+asyncpg://", "postgresql://")
     )
 }
@@ -826,6 +829,91 @@ async def check_missed_jobs():
             logger.error(f"Error running missed streak reminders check: {e}")
 
 
+async def send_contest_start_alert(slug: str, title: str, duration_mins: int):
+    """
+    Sends the 'Starting Now' contest alert to all subscribed channels and users.
+    Called precisely 10 seconds before the contest starts.
+    """
+    start_cache_key = f"leetcode_feed:contest_alert_start:{slug}"
+    if await cache_manager.get(start_cache_key):
+        return
+
+    logger.info(f"Triggering precise contest start alert for {title}...")
+
+    channels = list(settings.leetcode_feed_channels)
+    try:
+        active_groups = await db.fetch(
+            "SELECT group_id FROM group_settings WHERE setting_name = 'feed' AND setting_value = 'enable'"
+        )
+        for row in active_groups:
+            channels.append(row["group_id"])
+    except Exception as db_err:
+        logger.error(f"Error loading group feed subscribers for start alert: {db_err}")
+
+    start_msg = (
+        f"🚀 {html.bold('LeetCode Contest Starting Now!')} ⚔️\n\n"
+        f"🏆 {html.bold(html_escape(title))} is beginning!\n"
+        f"⏱️ {html.bold('Duration:')} {duration_mins} minutes\n\n"
+        f"🔗 <a href='https://leetcode.com/contest/{slug}'>Enter Contest Arena</a>\n\n"
+        f"Good luck and high rating boosts to all participants! 💪"
+    )
+
+    for cid in channels:
+        try:
+            await bot.send_message(chat_id=cid, text=start_msg, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Error sending contest start alert to feed {cid}: {e}")
+
+    try:
+        contest_users = await db.get_users_with_contest_reminders()
+        for uid in contest_users:
+            try:
+                await bot.send_message(chat_id=uid, text=start_msg, parse_mode="HTML")
+                await asyncio.sleep(0.05)
+            except Exception as user_err:
+                logger.error(f"Failed to send contest starting warning to user {uid}: {user_err}")
+    except Exception as db_err:
+        logger.error(f"Failed to fetch contest reminder users: {db_err}")
+
+    await cache_manager.set(start_cache_key, "1", expire_seconds=7200)
+
+
+async def send_contest_end_alert(slug: str, title: str):
+    """
+    Sends the 'Ended' contest alert to all subscribed channels.
+    Called precisely at the contest end time.
+    """
+    end_cache_key = f"leetcode_feed:contest_alert_end:{slug}"
+    if await cache_manager.get(end_cache_key):
+        return
+
+    logger.info(f"Triggering precise contest end alert for {title}...")
+
+    channels = list(settings.leetcode_feed_channels)
+    try:
+        active_groups = await db.fetch(
+            "SELECT group_id FROM group_settings WHERE setting_name = 'feed' AND setting_value = 'enable'"
+        )
+        for row in active_groups:
+            channels.append(row["group_id"])
+    except Exception as db_err:
+        logger.error(f"Error loading group feed subscribers for end alert: {db_err}")
+
+    end_msg = (
+        f"🏁 {html.bold('LeetCode Contest has Ended!')} 🏆\n\n"
+        f"🏆 {html.bold(html_escape(title))} has finished.\n\n"
+        f"How did it go? Discuss solutions, analyze your complexity using `/analyze`, or review code structures using `/review` with @MemoizeLC_bot! 🧠"
+    )
+
+    for cid in channels:
+        try:
+            await bot.send_message(chat_id=cid, text=end_msg, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Error sending contest end alert to feed {cid}: {e}")
+
+    await cache_manager.set(end_cache_key, "1", expire_seconds=7200)
+
+
 async def poll_leetcode_feed():
     """
     Background job to poll LeetCode for daily challenge updates and contest alerts.
@@ -864,6 +952,8 @@ async def poll_leetcode_feed():
             if not already_posted:
                 question = daily["question"]
                 title = question["title"]
+                frontend_id = question.get("questionFrontendId", "")
+                title_display = f"{frontend_id}. {title}" if frontend_id else title
                 difficulty = question["difficulty"]
                 tags = [t["name"] for t in question["topicTags"]]
                 link = f"https://leetcode.com{daily['link']}"
@@ -879,7 +969,7 @@ async def poll_leetcode_feed():
 
                 daily_summary_msg = (
                     f"📅 {html.bold('LeetCode Daily Coding Challenge')} ({daily_date})\n\n"
-                    f"🏆 {html.bold(html_escape(title))}\n"
+                    f"🏆 {html.bold(html_escape(title_display))}\n"
                     f"Difficulty: {diff_emoji} {html.bold(html_escape(difficulty))}\n"
                     f"Tags: {html.italic(', '.join([html_escape(t) for t in tags]))}\n"
                     f"🔗 Link: <a href='{link}'>Solve on LeetCode</a>\n\n"
@@ -1043,71 +1133,44 @@ async def poll_leetcode_feed():
                             today_cache_key, "1", expire_seconds=86400
                         )
 
-                # Starting alert (starts in <= 5 minutes)
-                if time_to_start <= 300:
-                    start_cache_key = f"leetcode_feed:contest_alert_start:{slug}"
-                    start_posted = await cache_manager.get(start_cache_key)
-                    if not start_posted:
-                        start_msg = (
-                            f"🚀 {html.bold('LeetCode Contest Starting Now!')} ⚔️\n\n"
-                            f"🏆 {html.bold(html_escape(title))} is beginning!\n"
-                            f"⏱️ {html.bold('Duration:')} {duration_mins} minutes\n\n"
-                            f"🔗 <a href='https://leetcode.com/contest/{slug}'>Enter Contest Arena</a>\n\n"
-                            f"Good luck and high rating boosts to all participants! 💪"
+            # Schedule precise date-triggered jobs for start (10s before) and end alerts
+            start_alert_time = start_dt - datetime.timedelta(seconds=10)
+            if start_alert_time > now:
+                start_cache_key = f"leetcode_feed:contest_alert_start:{slug}"
+                start_posted = await cache_manager.get(start_cache_key)
+                if not start_posted:
+                    try:
+                        scheduler.add_job(
+                            send_contest_start_alert,
+                            trigger="date",
+                            run_date=start_alert_time,
+                            id=f"contest_start_{slug}",
+                            args=[slug, title, duration_mins],
+                            jobstore="db",
+                            replace_existing=True,
                         )
-                        for cid in channels:
-                            try:
-                                await bot.send_message(
-                                    chat_id=cid, text=start_msg, parse_mode="HTML"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Error sending contest start alert to feed {cid}: {e}"
-                                )
+                        logger.info(f"Scheduled precise start alert for {title} at {start_alert_time}")
+                    except Exception as sched_err:
+                        logger.error(f"Error scheduling start alert for {title}: {sched_err}")
 
-                        # Send to users who enabled contest reminders
-                        try:
-                            contest_users = await db.get_users_with_contest_reminders()
-                            for uid in contest_users:
-                                try:
-                                    await bot.send_message(
-                                        chat_id=uid, text=start_msg, parse_mode="HTML"
-                                    )
-                                    await asyncio.sleep(0.05)
-                                except Exception as user_err:
-                                    logger.error(
-                                        f"Failed to send contest starting warning to user {uid}: {user_err}"
-                                    )
-                        except Exception as db_err:
-                            logger.error(
-                                f"Failed to fetch contest reminder users: {db_err}"
-                            )
-
-                        await cache_manager.set(
-                            start_cache_key, "1", expire_seconds=7200
-                        )
-
-            # Ending alert (ended in the last 10 minutes)
-            time_since_end = now_ts - end_time
-            if 0 <= time_since_end <= 600:
+            end_alert_time = datetime.datetime.fromtimestamp(end_time, tz=datetime.timezone.utc)
+            if end_alert_time > now:
                 end_cache_key = f"leetcode_feed:contest_alert_end:{slug}"
                 end_posted = await cache_manager.get(end_cache_key)
                 if not end_posted:
-                    end_msg = (
-                        f"🏁 {html.bold('LeetCode Contest has Ended!')} 🏆\n\n"
-                        f"🏆 {html.bold(html_escape(title))} has finished.\n\n"
-                        f"How did it go? Discuss solutions, analyze your complexity using `/analyze`, or review code structures using `/review` with @MemoizeLC_bot! 🧠"
-                    )
-                    for cid in channels:
-                        try:
-                            await bot.send_message(
-                                chat_id=cid, text=end_msg, parse_mode="HTML"
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Error sending contest end alert to feed {cid}: {e}"
-                            )
-                    await cache_manager.set(end_cache_key, "1", expire_seconds=7200)
+                    try:
+                        scheduler.add_job(
+                            send_contest_end_alert,
+                            trigger="date",
+                            run_date=end_alert_time,
+                            id=f"contest_end_{slug}",
+                            args=[slug, title],
+                            jobstore="db",
+                            replace_existing=True,
+                        )
+                        logger.info(f"Scheduled precise end alert for {title} at {end_alert_time}")
+                    except Exception as sched_err:
+                        logger.error(f"Error scheduling end alert for {title}: {sched_err}")
 
     except Exception as e:
         logger.error(f"Error in poll_leetcode_feed: {e}", exc_info=True)

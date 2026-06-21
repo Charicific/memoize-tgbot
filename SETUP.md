@@ -50,6 +50,8 @@ REDIS_URL=rediss://default:your-redis-password@your-redis-endpoint.upstash.io:63
 GROQ_API_KEY=gsk_your_groq_api_key
 GEMINI_API_KEY=AIzaSyYourGeminiApiKey
 PORT=8000
+UPTIMEROBOT_API_KEY=ur123456-abcdef
+UPTIMEROBOT_MONITOR_ID=777777777
 ```
 
 > [!NOTE]

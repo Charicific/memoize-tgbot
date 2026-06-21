@@ -19,9 +19,10 @@ class DotCommandMiddleware(BaseMiddleware):
             # Rewrite text: ".cmd args" → "/cmd args"
             new_text = "/" + event.text[1:]
 
-            # Extract command length for the entity (e.g. "/ping" -> length 5)
+            # Extract command length for the entity (e.g. "/ping" -> length 5, ignoring the @bot suffix if present)
             first_word = new_text.split()[0]
-            cmd_len = len(first_word)
+            cmd_name = first_word.split("@")[0] if "@" in first_word else first_word
+            cmd_len = len(cmd_name)
             command_entity = types.MessageEntity(
                 type="bot_command",
                 offset=0,

@@ -2,27 +2,28 @@ import os
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str
-    
+
     # Supabase / Postgres
     SUPABASE_URL: str
     SUPABASE_KEY: str
     # Format: postgresql+asyncpg://user:pass@host:port/dbname or postgresql://
     SUPABASE_DB_URL: str
-    
+
     # Upstash Redis
     REDIS_URL: str
-    
+
     # AI API Keys
     GROQ_API_KEY: str
     GEMINI_API_KEY: str
-    
+
     # Webhook & Server Settings
     PORT: int = 8000
     WEBHOOK_URL: str = ""  # If empty, polling mode is used for local testing
     WEBHOOK_PATH: str = "/webhook"
-    
+
     # Battle check frequency (in seconds)
     BATTLE_POLL_INTERVAL: int = 60
 
@@ -32,6 +33,10 @@ class Settings(BaseSettings):
     LEETCODE_FEED_CHANNEL_ID: str = ""
     SUPER_ADMIN_IDS: str = ""
     PROXIES: str = ""
+
+    # UptimeRobot API Configuration
+    UPTIMEROBOT_API_KEY: str = ""
+    UPTIMEROBOT_MONITOR_ID: str = ""
 
     @property
     def proxies_list(self) -> list[str]:
@@ -81,15 +86,10 @@ class Settings(BaseSettings):
                     pass
         return ids
 
-
-
-
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
+
 
 # Instantiate settings
 settings = Settings(_env_file=".env")
-

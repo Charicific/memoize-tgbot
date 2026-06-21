@@ -179,7 +179,12 @@ async def cmd_ping(message: Message):
     tg_latency = int((time.time() - start_tg) * 1000)
 
     # Get Bot Uptime
-    uptime = get_uptime_string()
+    from src.services.uptime_robot import get_uptimerobot_stats
+    ur_stats = await get_uptimerobot_stats()
+    if ur_stats and ur_stats.get("uptime") != "N/A":
+        uptime = ur_stats["uptime"]
+    else:
+        uptime = get_uptime_string()
 
     # Edit message with final metrics
     status_text = (
@@ -200,6 +205,25 @@ async def cmd_stats(message: Message):
         await message.reply("❌ Error retrieving statistics. Please try again later.")
         return
 
+    # Resolve bot status
+    is_maintenance = await cache_manager.get("system:maintenance")
+    if str(is_maintenance) == "1":
+        status_str = "Under Maintenance 🛠️"
+        status_emoji = "🛠️"
+    else:
+        from src.services.uptime_robot import get_uptimerobot_stats
+        ur_stats = await get_uptimerobot_stats()
+        if ur_stats and ur_stats.get("status"):
+            status_str = ur_stats["status"]
+        else:
+            status_str = "Up ✅"
+        
+        status_emoji = "🟢"
+        if "down" in status_str.lower():
+            status_emoji = "🔴"
+        elif "paused" in status_str.lower():
+            status_emoji = "🟡"
+
     stats_text = (
         f"📊 {html.bold('Memoize Bot Statistics')}\n\n"
         f"👤 {html.bold('Users:')}\n"
@@ -217,7 +241,8 @@ async def cmd_stats(message: Message):
         f"• Total solved problems: {html.bold(stats['total_solved'])}\n"
         f"• Active Spaced Repetition items: {html.bold(stats['total_srs'])}\n\n"
         f"🔔 {html.bold('Reminders:')}\n"
-        f"• Users with reminders enabled: {html.bold(stats['reminder_users'])}"
+        f"• Users with reminders enabled: {html.bold(stats['reminder_users'])}\n\n"
+        f"{status_emoji} {html.bold('Bot Status:')} {status_str}"
     )
     await message.reply(stats_text, parse_mode="HTML")
 

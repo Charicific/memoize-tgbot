@@ -486,6 +486,10 @@ PORT=8000
 # ─── Optional: Admin Configuration ──────────────────────────
 # SUPER_ADMIN_IDS=123456789,987654321
 # LOG_CHANNEL_ID=-100xxxxxxxxxx
+
+# ─── Optional: UptimeRobot Monitoring ───────────────────────
+# UPTIMEROBOT_API_KEY=your_api_key_here
+# UPTIMEROBOT_MONITOR_ID=your_monitor_id_here
 ```
 
 > **Tip:** Omitting `WEBHOOK_URL` automatically switches the bot to **long-polling mode** — no public URL or ngrok tunnel needed for local development.

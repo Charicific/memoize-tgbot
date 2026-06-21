@@ -206,6 +206,8 @@ async def process_view_daily_desc(callback_query: CallbackQuery):
         
     question = daily["question"]
     title = question["title"]
+    frontend_id = question.get("questionFrontendId", "")
+    title_display = f"{frontend_id}. {title}" if frontend_id else title
     title_slug = question["titleSlug"]
     difficulty = question["difficulty"]
     content = question["content"]
@@ -217,7 +219,7 @@ async def process_view_daily_desc(callback_query: CallbackQuery):
     
     response = (
         f"📅 {html.bold('Daily Coding Challenge')} ({daily['date']})\n\n"
-        f"🏆 {html.bold(title)}\n"
+        f"🏆 {html.bold(title_display)}\n"
         f"Difficulty: {diff_emoji} {html.bold(difficulty)}\n"
         f"Tags: {html.italic(', '.join(tags))}\n"
         f"🔗 Link: <a href='{link}'>Solve on LeetCode</a>\n\n"

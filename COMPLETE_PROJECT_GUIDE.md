@@ -530,6 +530,8 @@ memoize-tgbot/
    GROQ_API_KEY=your_groq_key
    GEMINI_API_KEY=your_gemini_key
    PORT=8000
+   UPTIMEROBOT_API_KEY=your_uptimerobot_api_key
+   UPTIMEROBOT_MONITOR_ID=your_monitor_id
    ```
 5. Apply the PostgreSQL schemas using Supabase SQL Editor by executing the queries in [database/schema.sql](database/schema.sql).
 
