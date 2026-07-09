@@ -424,7 +424,7 @@ Do not include any greeting, explanation, markdown formatting, or quotes. Just o
                     {"role": "system", "content": "You are a helpful LeetCode problem matching assistant."},
                     {"role": "user", "content": prompt}
                 ],
-                model="llama-3.3-70b-versatile",
+                model="openai/gpt-oss-120b",
                 temperature=0.0
             )
             corrected = chat_completion.choices[0].message.content.strip().replace('"', '')

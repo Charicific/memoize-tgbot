@@ -33,13 +33,18 @@ async def cmd_visualize(message: Message, command: CommandObject):
 
     progress_msg = await message.reply("🤖 Analyzing code execution path and generating flowchart... Please wait.")
 
-    # Call AI service
-    result = await ai_service.generate_flowchart_mermaid(code)
-    if not result:
-        await progress_msg.edit_text("❌ Failed to generate flowchart visualization. Please try again later.")
-        return
+    try:
+        # Call AI service
+        result = await ai_service.generate_flowchart_mermaid(code)
+        if not result:
+            await progress_msg.edit_text("❌ Failed to generate flowchart visualization. Please try again later.")
+            return
 
-    mermaid_code, trace_steps = result
+        mermaid_code, trace_steps = result
+    except Exception as e:
+        logger.error(f"Error in cmd_visualize: {e}", exc_info=True)
+        await progress_msg.edit_text(f"❌ {e}")
+        return
     logger.info(f"Generated Mermaid syntax:\n{mermaid_code}")
 
     from src.utils.formatters import clean_leetcode_html

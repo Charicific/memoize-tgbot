@@ -136,10 +136,10 @@ async def cmd_help(message: Message):
         f"• `/dstreak` — View local Daily Challenge solve streak\n\n"
         
         f"🤖 {html.bold('AI Features:')}\n"
-        f"• {html.code('/hint &lt;problem_slug&gt;')} — Get progressive tips for a problem (Llama 3.3)\n"
-        f"• {html.code('/analyze &lt;paste_code&gt;')} — Time/space complexity analysis (Llama 3.3)\n"
-        f"• {html.code('/review &lt;paste_code&gt;')} — Code quality audit (Gemini Flash 2.0)\n"
-        f"• {html.code('/visualize &lt;paste_code&gt;')} — Flowchart & variable trace (Llama 3.3)\n\n"
+        f"• {html.code('/hint &lt;problem_slug&gt;')} — Get progressive tips for a problem (AI)\n"
+        f"• {html.code('/analyze &lt;paste_code&gt;')} — Time/space complexity analysis (AI)\n"
+        f"• {html.code('/review &lt;paste_code&gt;')} — Code quality audit (AI)\n"
+        f"• {html.code('/visualize &lt;paste_code&gt;')} — Flowchart & variable trace (AI)\n\n"
         
         f"🔔 {html.bold('Settings & Reminders:')}\n"
         f"• `/reminders` — Manage daily challenge, streak, and contest alerts\n\n"

@@ -17,9 +17,14 @@ async def generate_and_send_hints(message: Message, user_id: int, problem: dict)
     description = problem["content"]
     code_templates = "\n".join([f"{item['lang']}:\n{item['code']}" for item in problem.get("codeSnippets", [])])
 
-    hints = await ai_service.generate_progressive_hints(title, description, code_templates)
-    if not hints:
-        await message.reply("❌ Error generating hints. Please try again later.")
+    try:
+        hints = await ai_service.generate_progressive_hints(title, description, code_templates)
+        if not hints:
+            await message.reply("❌ Error generating hints. Please try again later.")
+            return
+    except Exception as e:
+        logger.error(f"Error in generate_and_send_hints: {e}", exc_info=True)
+        await message.reply(f"❌ {e}")
         return
 
     # Cache hints
@@ -172,12 +177,16 @@ async def cmd_analyze(message: Message, command: CommandObject):
 
     await message.reply("🤖 Analyzing time and space complexity... Please wait.")
 
-    analysis = await ai_service.analyze_complexity(code)
-    if not analysis:
-        await message.reply("❌ Could not analyze the code. Please try again.")
-        return
+    try:
+        analysis = await ai_service.analyze_complexity(code)
+        if not analysis:
+            await message.reply("❌ Could not analyze the code. Please try again.")
+            return
 
-    await message.reply(analysis, parse_mode="HTML")
+        await message.reply(analysis, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error in cmd_analyze: {e}", exc_info=True)
+        await message.reply(f"❌ {e}")
 
 
 @router.message(Command("review"))
@@ -202,22 +211,26 @@ async def cmd_review(message: Message, command: CommandObject):
         )
         return
 
-    await message.reply("🤖 Performing detailed code review using Gemini Flash 2.0... Please wait.")
+    await message.reply("🤖 Performing detailed code review... Please wait.")
 
-    # We can try to extract a problem title if they paste context, or just pass generic title
-    review = await ai_service.generate_code_review(
-        problem_title="User Submitted Code",
-        problem_description="N/A (General code review)",
-        user_code=code
-    )
+    try:
+        # We can try to extract a problem title if they paste context, or just pass generic title
+        review = await ai_service.generate_code_review(
+            problem_title="User Submitted Code",
+            problem_description="N/A (General code review)",
+            user_code=code
+        )
 
-    if not review:
-        await message.reply("❌ Code review failed. Please try again.")
-        return
+        if not review:
+            await message.reply("❌ Code review failed. Please try again.")
+            return
 
-    # Check length
-    if len(review) > 4096:
-        for i in range(0, len(review), 4000):
-            await message.reply(review[i:i+4000], parse_mode="HTML")
-    else:
-        await message.reply(review, parse_mode="HTML")
+        # Check length
+        if len(review) > 4096:
+            for i in range(0, len(review), 4000):
+                await message.reply(review[i:i+4000], parse_mode="HTML")
+        else:
+            await message.reply(review, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error in cmd_review: {e}", exc_info=True)
+        await message.reply(f"❌ {e}")

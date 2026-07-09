@@ -17,7 +17,8 @@ class Settings(BaseSettings):
 
     # AI API Keys
     GROQ_API_KEY: str
-    GEMINI_API_KEY: str
+    NVIDIA_API_KEY: str
+    OPENROUTER_API_KEY: Optional[str] = None
 
     # Webhook & Server Settings
     PORT: int = 8000

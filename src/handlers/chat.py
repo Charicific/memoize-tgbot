@@ -69,10 +69,10 @@ TOPIC_RESPONSES = {
         "🤖 <b>AI Coaching Features</b>\n\n"
         "Get algorithmic guidance and feedback directly in your chat without exposing full solutions!\n\n"
         "<b>AI Commands:</b>\n"
-        "• <code>/hint &lt;problem_slug&gt;</code> — Generates progressive, step-by-step hints (Conceptual ➡️ Strategic ➡️ Pseudocode) via Groq (Llama 3.3).\n"
-        "• <code>/analyze</code> — Analyzes a pasted code block (or replied code) for time and space complexity.\n"
-        "• <code>/review</code> — Audits code quality, style, and correctness using Gemini Flash 2.0.\n"
-        "• <code>/visualize</code> — Generates a control flow Mermaid diagram and step-by-step trace of your code execution.\n\n"
+        "• <code>/hint &lt;problem_slug&gt;</code> — Generates progressive, step-by-step hints (Conceptual ➡️ Strategic ➡️ Pseudocode) using AI.\n"
+        "• <code>/analyze</code> — Analyzes a pasted code block (or replied code) for time and space complexity using AI.\n"
+        "• <code>/review</code> — Audits code quality, style, and correctness using AI.\n"
+        "• <code>/visualize</code> — Generates a control flow Mermaid diagram and step-by-step trace of your code execution using AI.\n\n"
         "<i>Reply with \"how to use AI\" for prompt tips.</i>"
     ),
     "streak": (

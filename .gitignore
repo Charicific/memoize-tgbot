@@ -23,6 +23,7 @@ logs/
 # OS Specific
 .DS_Store
 Thumbs.db
+.vscode/
 
 # Techstack
 leetcode-companion-techstack.md
