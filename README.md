@@ -17,7 +17,7 @@
 
 [![Infrastructure Cost](https://img.shields.io/badge/Infrastructure%20Cost-₹0%2Fmonth-brightgreen?style=flat-square)](https://koyeb.com)
 [![Deployment](https://img.shields.io/badge/Deployed%20on-Koyeb-blueviolet?style=flat-square&logo=docker)](https://koyeb.com)
-[![AI Powered](https://img.shields.io/badge/AI-Groq%20%2B%20Gemini-orange?style=flat-square)](https://console.groq.com)
+[![AI Powered](https://img.shields.io/badge/AI-Multi--Provider-orange?style=flat-square)](https://console.groq.com)
 [![Spaced Repetition](https://img.shields.io/badge/Algorithm-SM--2%20Spaced%20Repetition-critical?style=flat-square)](https://supermemo.guru/wiki/SM-2)
 
 > **Daily Challenges · 1v1 Battles · AI Coaching · Spaced Repetition · Streaks · Leaderboards**
@@ -112,14 +112,14 @@ This turns your solve log into a **long-term memory system**, not just a history
 
 ### AI Coaching
 
-Four distinct AI commands powered by **Groq (Llama 3.3 70B)** and **Gemini Flash 2.0**:
+Four distinct AI commands powered by **Groq**, **NVIDIA Build**, and **OpenRouter (fallback)**:
 
 | Command | What it does | Model |
 |---|---|---|
-| `/hint <slug>` | Progressive hints unlocked one at a time: conceptual → strategic → pseudocode | Groq Llama 3.3 70B |
-| `/analyze <code>` | Big-O time & space complexity breakdown with explanation | Groq Llama 3.3 70B |
-| `/review <code>` | Correctness check, edge case coverage, refactoring suggestions | Gemini Flash 2.0 |
-| `/visualize <code>` | Mermaid control-flow diagram + variable state trace | Gemini Flash 2.0 |
+| `/hint <slug>` | Progressive hints unlocked one at a time: conceptual → strategic → pseudocode | Groq: `openai/gpt-oss-120b` |
+| `/analyze <code>` | Big-O time & space complexity breakdown with explanation | Groq: `openai/gpt-oss-120b` |
+| `/review <code>` | Correctness check, edge case coverage, refactoring suggestions | NVIDIA: `qwen/qwen3-coder-480b-a35b-instruct` |
+| `/visualize <code>` | Mermaid control-flow diagram + variable state trace | NVIDIA: `deepseek-ai/deepseek-v3.2` |
 
 The hint system is intentionally **progressive** — you can't skip to the answer. Each call unlocks only the next level, preserving the learning value of the struggle.
 
@@ -253,7 +253,7 @@ The bot runs as a containerized **FastAPI + aiogram** application. All component
 │                                                              │
 │  ┌─────────────────────┐   ┌──────────────────────────────┐  │
 │  │  LeetCodeClient     │   │  AIService                   │  │
-│  │  (GraphQL / httpx)  │   │  (Groq Llama 3.3 + Gemini)   │  │
+│  │  (GraphQL / httpx)  │   │  (Groq/NVIDIA/OpenRouter)    │  │
 │  └─────────────────────┘   └──────────────────────────────┘  │
 │                                                              │
 │  ┌─────────────────────┐   ┌──────────────────────────────┐  │
@@ -291,8 +291,8 @@ The bot runs as a containerized **FastAPI + aiogram** application. All component
 | Database | Supabase (PostgreSQL) | Persistent storage via asyncpg |
 | Cache & FSM | Upstash Redis | Bot state, rate limits, role cache |
 | LeetCode Data | LeetCode GraphQL API | Problem fetch, submission polling |
-| AI — Hints & Analysis | Groq (Llama 3.3 70B) | Fast inference for hints & complexity |
-| AI — Review & Visualize | Gemini Flash 2.0 | Deep code review and flowcharts |
+| AI — Hints & Analysis | Groq (openai/gpt-oss-120b) | Fast inference for hints & complexity |
+| AI — Review & Visualize | NVIDIA Build (Qwen-3 / DeepSeek-V3) | Deep code review and flowchart visualization |
 | Background Jobs | APScheduler | Cron-style persistent scheduled tasks |
 | Deployment | Koyeb (Docker) | Containerized cloud hosting |
 
@@ -395,7 +395,7 @@ memoize-tgbot/
 │   │   ├── leetcode.py              # LeetCode GraphQL client (httpx, async)
 │   │   ├── supabase_db.py           # asyncpg connection pool wrapper & all DB queries
 │   │   ├── redis_cache.py           # Cache manager: FSM, rate limits, role cache
-│   │   ├── ai_service.py            # Groq + Gemini API integrations
+│   │   ├── ai_service.py            # Multi-provider client wrapper (Groq, NVIDIA, OpenRouter)
 │   │   └── srs_service.py           # SuperMemo SM-2 algorithm implementation
 │   │
 │   └── utils/
@@ -425,8 +425,8 @@ memoize-tgbot/
 | Telegram | Bot token from BotFather | [@BotFather](https://t.me/BotFather) |
 | Supabase | Project URL + anon key + DB URL | [supabase.com](https://supabase.com) |
 | Upstash | Redis connection URL | [upstash.com](https://upstash.com) |
-| Groq | API key (free tier) | [console.groq.com](https://console.groq.com) |
-| Gemini | API key (free tier) | [aistudio.google.com](https://aistudio.google.com) |
+| NVIDIA | API key (free tier) | [integrate.api.nvidia.com](https://integrate.api.nvidia.com) |
+| OpenRouter | API key (optional fallback) | [openrouter.ai](https://openrouter.ai) |
 
 ---
 
@@ -475,7 +475,8 @@ REDIS_URL=rediss://default:your_password@your_endpoint.upstash.io:6379
 
 # ─── AI Keys ─────────────────────────────────────────────────
 GROQ_API_KEY=your_groq_api_key
-GEMINI_API_KEY=your_gemini_api_key
+NVIDIA_API_KEY=your_nvidia_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 
 # ─── Server ──────────────────────────────────────────────────
 PORT=8000
@@ -516,8 +517,9 @@ The bot should appear online in your Telegram client within a few seconds.
 | `SUPABASE_KEY` | Supabase anon / service-role key |
 | `SUPABASE_DB_URL` | `postgresql+asyncpg://...` direct connection string |
 | `REDIS_URL` | Upstash Redis `rediss://` URL |
-| `GROQ_API_KEY` | Groq API key for Llama 3.3 70B inference |
-| `GEMINI_API_KEY` | Google Gemini Flash 2.0 API key |
+| `GROQ_API_KEY` | Groq API key for primary `/hint` and `/analyze` calls |
+| `NVIDIA_API_KEY` | NVIDIA API key for primary `/review` and `/visualize` calls |
+| `OPENROUTER_API_KEY` | OpenRouter API key for rate-limit fallbacks (optional) |
 | `PORT` | Port for Uvicorn / FastAPI (default: `8000`) |
 | `WEBHOOK_URL` | Public HTTPS URL; omit to use long-polling mode |
 | `SUPER_ADMIN_IDS` | Comma-separated Telegram user IDs with super admin access |
@@ -596,8 +598,9 @@ The FastAPI server exposes `/health`, used for uptime monitoring and deployment 
 | [Koyeb](https://koyeb.com) | Container hosting | 1 free instance | **₹0** |
 | [Supabase](https://supabase.com) | PostgreSQL + connection pooling | 500 MB storage, 2 GB transfer | **₹0** |
 | [Upstash](https://upstash.com) | Redis (FSM + rate limits + cache) | 10K requests/day | **₹0** |
-| [Groq](https://console.groq.com) | Llama 3.3 70B inference | Rate-limited free tier | **₹0** |
-| [Gemini](https://aistudio.google.com) | Flash 2.0 inference | Rate-limited free tier | **₹0** |
+| [Groq](https://console.groq.com) | `/hint` and `/analyze` inference | Rate-limited free tier | **₹0** |
+| [NVIDIA](https://build.nvidia.com) | `/review` and `/visualize` inference | Free trial quota (1,000 credits) | **₹0** |
+| [OpenRouter](https://openrouter.ai) | Fallback free-tier models | Free tier endpoints | **₹0** |
 | [UptimeRobot](https://uptimerobot.com) | Uptime monitoring | 50 monitors | **₹0** |
 
 ---

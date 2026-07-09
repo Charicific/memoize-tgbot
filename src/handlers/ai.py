@@ -5,6 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from src.services.leetcode import LeetCodeClient
 from src.services.ai_service import ai_service
 from src.services.redis_cache import cache_manager
+from src.utils.formatters import format_markdown_to_html
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ async def generate_and_send_hints(message: Message, user_id: int, problem: dict)
     await message.reply(
         f"🤖 {html.bold('Progressive Hints for ' + num_prefix + title)}\n\n"
         f"💡 {html.bold('Hint 1 (Conceptual):')}\n"
-        f"{hints[0]}",
+        f"{format_markdown_to_html(hints[0])}",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -135,18 +136,18 @@ async def process_ai_hint(callback_query: CallbackQuery):
         
         # We append Hint 2 to the message
         new_text = (
-            f"{callback_query.message.text}\n\n"
+            f"{callback_query.message.html_text}\n\n"
             f"💡 {html.bold('Hint 2 (Strategic):')}\n"
-            f"{hints[1]}"
+            f"{format_markdown_to_html(hints[1])}"
         )
         await callback_query.message.edit_text(new_text, reply_markup=keyboard, parse_mode="HTML")
     
     elif requested_hint_level == 3:
         # Final hint level
         new_text = (
-            f"{callback_query.message.text}\n\n"
+            f"{callback_query.message.html_text}\n\n"
             f"💡 {html.bold('Hint 3 (Detailed Pseudo-code):')}\n"
-            f"{hints[2]}"
+            f"{format_markdown_to_html(hints[2])}"
         )
         await callback_query.message.edit_text(new_text, parse_mode="HTML")
 
@@ -183,7 +184,7 @@ async def cmd_analyze(message: Message, command: CommandObject):
             await message.reply("❌ Could not analyze the code. Please try again.")
             return
 
-        await message.reply(analysis, parse_mode="HTML")
+        await message.reply(format_markdown_to_html(analysis), parse_mode="HTML")
     except Exception as e:
         logger.error(f"Error in cmd_analyze: {e}", exc_info=True)
         await message.reply(f"❌ {e}")
@@ -225,12 +226,13 @@ async def cmd_review(message: Message, command: CommandObject):
             await message.reply("❌ Code review failed. Please try again.")
             return
 
-        # Check length
-        if len(review) > 4096:
+        # Check length and send formatted chunks
+        if len(review) > 4000:
             for i in range(0, len(review), 4000):
-                await message.reply(review[i:i+4000], parse_mode="HTML")
+                chunk = review[i:i+4000]
+                await message.reply(format_markdown_to_html(chunk), parse_mode="HTML")
         else:
-            await message.reply(review, parse_mode="HTML")
+            await message.reply(format_markdown_to_html(review), parse_mode="HTML")
     except Exception as e:
         logger.error(f"Error in cmd_review: {e}", exc_info=True)
         await message.reply(f"❌ {e}")

@@ -108,3 +108,49 @@ def escape_html(text: str) -> str:
         return ""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+
+def format_markdown_to_html(text: str) -> str:
+    """
+    Safely converts basic markdown (*, **, `, ```) to Telegram-compatible HTML.
+    Escapes all other HTML characters to prevent parsing errors.
+    """
+    if not text:
+        return ""
+    
+    # 1. Escape all HTML special characters
+    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    
+    # 2. Extract and safeguard code blocks to prevent formatting inside them
+    code_blocks = []
+    def save_code_block(match):
+        code_blocks.append(match.group(2))
+        return f"__CODE_BLOCK_{len(code_blocks)-1}__"
+    
+    escaped = re.sub(r'```(\w*)\n(.*?)\n?```', save_code_block, escaped, flags=re.DOTALL)
+    
+    # 3. Extract and safeguard inline code
+    inline_codes = []
+    def save_inline_code(match):
+        inline_codes.append(match.group(1))
+        return f"__INLINE_CODE_{len(inline_codes)-1}__"
+        
+    escaped = re.sub(r'`([^`\n]+)`', save_inline_code, escaped)
+    
+    # 4. Convert bold (**text**)
+    escaped = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', escaped)
+    
+    # 5. Convert italic (*text* or _text_)
+    escaped = re.sub(r'\*([^*]+)\*', r'<i>\1</i>', escaped)
+    escaped = re.sub(r'_([^_]+)_', r'<i>\1</i>', escaped)
+    
+    # 6. Restore inline code wrapped in <code>
+    for i, code_content in enumerate(inline_codes):
+        escaped = escaped.replace(f"__INLINE_CODE_{i}__", f"<code>{code_content}</code>")
+        
+    # 7. Restore code blocks wrapped in <pre><code>
+    for i, code_content in enumerate(code_blocks):
+        escaped = escaped.replace(f"__CODE_BLOCK_{i}__", f"<pre><code>{code_content}</code></pre>")
+        
+    return escaped
+
+
