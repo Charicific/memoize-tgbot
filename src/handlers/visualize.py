@@ -1,8 +1,11 @@
 import logging
 import base64
+import json
+import zlib
+import httpx
 from aiogram import Router, html
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 from src.services.ai_service import ai_service
 from src.services.redis_cache import cache_manager
 
@@ -51,13 +54,25 @@ async def cmd_visualize(message: Message, command: CommandObject):
     trace_steps = clean_leetcode_html(trace_steps)
 
     try:
-        # Base64 encode the mermaid code for the mermaid.ink URL
-        # Standard base64 is supported by mermaid.ink
-        encoded_bytes = base64.b64encode(mermaid_code.encode("utf-8"))
-        encoded_str = encoded_bytes.decode("utf-8")
+        # 1. Prepare JSON structure & compress using zlib (pako format)
+        j_graph = {"code": mermaid_code, "mermaid": {"theme": "default"}}
+        byte_str = json.dumps(j_graph).encode('utf-8')
+        compress = zlib.compressobj(9, zlib.DEFLATED, 15, 8, zlib.Z_DEFAULT_STRATEGY)
+        deflated = compress.compress(byte_str) + compress.flush()
         
-        # Build image URL
-        photo_url = f"https://mermaid.ink/img/{encoded_str}"
+        # 2. Base64 encode and make URL-safe
+        b64 = base64.b64encode(deflated).decode('ascii')
+        safe_b64 = b64.replace('+', '-').replace('/', '_')
+        photo_url = f"https://mermaid.ink/img/pako:{safe_b64}"
+        
+        # 3. Download the rendering directly from mermaid.ink to upload it as bytes
+        logger.info(f"Downloading flowchart image from: {photo_url}")
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            img_response = await client.get(photo_url)
+            img_response.raise_for_status()
+            photo_bytes = img_response.content
+            
+        photo_file = BufferedInputFile(photo_bytes, filename="flowchart.png")
         
         caption_text = (
             f"📊 {html.bold('Execution Flowchart & Trace')}\n\n"
@@ -68,7 +83,7 @@ async def cmd_visualize(message: Message, command: CommandObject):
         if len(caption_text) <= 1024:
             await message.bot.send_photo(
                 chat_id=message.chat.id,
-                photo=photo_url,
+                photo=photo_file,
                 caption=caption_text,
                 parse_mode="HTML",
                 reply_to_message_id=message.message_id
@@ -78,7 +93,7 @@ async def cmd_visualize(message: Message, command: CommandObject):
             # Send photo and follow up with the full trace details in a text message
             await message.bot.send_photo(
                 chat_id=message.chat.id,
-                photo=photo_url,
+                photo=photo_file,
                 caption=f"📊 {html.bold('Execution Flowchart')}",
                 parse_mode="HTML",
                 reply_to_message_id=message.message_id

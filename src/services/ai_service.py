@@ -192,11 +192,11 @@ Format your output EXACTLY as follows with the custom delimiter "|||":
         Analyzes the time and space complexity of the code.
         """
         prompt = f"""
-Analyze the time and space complexity of the following code.
+Analyze the time and space complexity of the following code. The code can be in any programming language (e.g., C++, Python, Java, JavaScript, Go, etc.). Please identify the language of the code snippet, analyze its complexity, and explain your rationale accordingly.
 Explain your analysis step-by-step and suggest if any optimizations can be made.
 
 Code:
-```python
+```
 {code_snippet}
 ```
 
@@ -222,14 +222,14 @@ Format the output clearly using Markdown, highlighting:
         """
         prompt = f"""
 You are an elite software engineer and algorithms tutor.
-Perform a thorough, detailed code review on the user's code for this LeetCode problem.
+Perform a thorough, detailed code review on the user's code for this LeetCode problem. The user's code can be written in any programming language (e.g., C++, Python, Java, JavaScript, Go, etc.). Please review the code in its respective programming language, and do not assume or enforce Python coding style or conventions unless the code is actually written in Python.
 
 Problem: {problem_title}
 Description:
 {problem_description}
 
 User's Code:
-```python
+```
 {user_code}
 ```
 

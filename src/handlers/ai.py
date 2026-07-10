@@ -154,6 +154,49 @@ async def process_ai_hint(callback_query: CallbackQuery):
     await callback_query.answer()
 
 
+def split_markdown(text: str, max_chunk_size: int = 3800) -> list[str]:
+    chunks = []
+    lines = text.splitlines(keepends=True)
+    current_chunk = []
+    current_length = 0
+    in_code_block = False
+    code_block_lang = ""
+
+    for line in lines:
+        line_len = len(line)
+        # Check if the line changes code block state
+        if line.strip().startswith("```"):
+            in_code_block = not in_code_block
+            if in_code_block:
+                code_block_lang = line.strip()[3:]  # e.g. "python", "cpp"
+            else:
+                code_block_lang = ""
+
+        # If adding this line exceeds the chunk size limit
+        if current_length + line_len > max_chunk_size:
+            # If we are inside a code block, close it before finishing the chunk
+            if in_code_block:
+                current_chunk.append("```\n")
+            
+            chunks.append("".join(current_chunk))
+            
+            # Start next chunk
+            current_chunk = []
+            if in_code_block:
+                # Reopen code block in the next chunk
+                current_chunk.append(f"```{code_block_lang}\n")
+                current_length = len(current_chunk[-1])
+            else:
+                current_length = 0
+
+        current_chunk.append(line)
+        current_length += line_len
+
+    if current_chunk:
+        chunks.append("".join(current_chunk))
+    return chunks
+
+
 @router.message(Command("analyze"))
 async def cmd_analyze(message: Message, command: CommandObject):
     user_id = message.from_user.id
@@ -184,7 +227,9 @@ async def cmd_analyze(message: Message, command: CommandObject):
             await message.reply("❌ Could not analyze the code. Please try again.")
             return
 
-        await message.reply(format_markdown_to_html(analysis), parse_mode="HTML")
+        chunks = split_markdown(analysis)
+        for chunk in chunks:
+            await message.reply(format_markdown_to_html(chunk), parse_mode="HTML")
     except Exception as e:
         logger.error(f"Error in cmd_analyze: {e}", exc_info=True)
         await message.reply(f"❌ {e}")
@@ -226,13 +271,9 @@ async def cmd_review(message: Message, command: CommandObject):
             await message.reply("❌ Code review failed. Please try again.")
             return
 
-        # Check length and send formatted chunks
-        if len(review) > 4000:
-            for i in range(0, len(review), 4000):
-                chunk = review[i:i+4000]
-                await message.reply(format_markdown_to_html(chunk), parse_mode="HTML")
-        else:
-            await message.reply(format_markdown_to_html(review), parse_mode="HTML")
+        chunks = split_markdown(review)
+        for chunk in chunks:
+            await message.reply(format_markdown_to_html(chunk), parse_mode="HTML")
     except Exception as e:
         logger.error(f"Error in cmd_review: {e}", exc_info=True)
         await message.reply(f"❌ {e}")

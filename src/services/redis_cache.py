@@ -11,18 +11,10 @@ logger = logging.getLogger(__name__)
 
 class RedisCacheManager:
     def __init__(self):
-        # Resolve the hostname in REDIS_URL to an IPv4 address to bypass dual-stack/IPv6 connection timeout issues on Koyeb
+        # Use the original REDIS_URL directly. Manual hostname resolution to IPv4 can cause routing
+        # timeouts in cloud platforms like Koyeb that use IPv6-only / NAT64 environments.
         url = settings.REDIS_URL
         ssl_check_hostname = True
-        try:
-            parsed = urlparse(url)
-            if parsed.hostname:
-                ip = socket.gethostbyname(parsed.hostname)
-                url = url.replace(parsed.hostname, ip)
-                ssl_check_hostname = False
-                logger.info(f"Resolved Redis host {parsed.hostname} to IPv4 {ip} for connection stability.")
-        except Exception as e:
-            logger.warning(f"Failed to resolve Redis host to IPv4: {e}. Attempting connection with original URL.")
 
         # Initialize the redis client from connection URL.
         # health_check_interval keeps the TLS connection to Upstash alive on Windows
