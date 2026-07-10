@@ -1,6 +1,8 @@
 import json
 import logging
+import socket
 from typing import Optional, Any
+from urllib.parse import urlparse
 from redis.asyncio import Redis
 from aiogram.fsm.storage.redis import RedisStorage
 from src.config import settings
@@ -9,17 +11,31 @@ logger = logging.getLogger(__name__)
 
 class RedisCacheManager:
     def __init__(self):
+        # Resolve the hostname in REDIS_URL to an IPv4 address to bypass dual-stack/IPv6 connection timeout issues on Koyeb
+        url = settings.REDIS_URL
+        ssl_check_hostname = True
+        try:
+            parsed = urlparse(url)
+            if parsed.hostname:
+                ip = socket.gethostbyname(parsed.hostname)
+                url = url.replace(parsed.hostname, ip)
+                ssl_check_hostname = False
+                logger.info(f"Resolved Redis host {parsed.hostname} to IPv4 {ip} for connection stability.")
+        except Exception as e:
+            logger.warning(f"Failed to resolve Redis host to IPv4: {e}. Attempting connection with original URL.")
+
         # Initialize the redis client from connection URL.
         # health_check_interval keeps the TLS connection to Upstash alive on Windows
         # (prevents WinError 121 / semaphore timeout on idle sockets).
         self.client: Redis = Redis.from_url(
-            settings.REDIS_URL,
+            url,
             decode_responses=True,
             socket_keepalive=True,
             socket_timeout=10,
             socket_connect_timeout=10,
             retry_on_timeout=True,
             health_check_interval=30,   # ping every 30s to prevent idle disconnects
+            ssl_check_hostname=ssl_check_hostname,
         )
         # Create aiogram FSM storage using the same redis client
         self.fsm_storage = RedisStorage(self.client)
