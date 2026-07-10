@@ -112,14 +112,14 @@ This turns your solve log into a **long-term memory system**, not just a history
 
 ### AI Coaching
 
-Four distinct AI commands powered by **Groq**, **NVIDIA Build**, and **OpenRouter (fallback)**:
+Four distinct AI commands powered by **Groq** and **OpenRouter (fallback)**:
 
 | Command | What it does | Model |
 |---|---|---|
-| `/hint <slug>` | Progressive hints unlocked one at a time: conceptual → strategic → pseudocode | Groq: `openai/gpt-oss-120b` |
-| `/analyze <code>` | Big-O time & space complexity breakdown with explanation | Groq: `openai/gpt-oss-120b` |
-| `/review <code>` | Correctness check, edge case coverage, refactoring suggestions | NVIDIA: `qwen/qwen3-coder-480b-a35b-instruct` |
-| `/visualize <code>` | Mermaid control-flow diagram + variable state trace | NVIDIA: `deepseek-ai/deepseek-v3.2` |
+| `/hint <slug>` | Progressive hints unlocked one at a time: conceptual → strategic → pseudocode | Groq: `openai/gpt-oss-120b` (Fallback: OpenRouter `google/gemma-4-31b-it:free`) |
+| `/analyze <code>` | Big-O time & space complexity breakdown with explanation | Groq: `openai/gpt-oss-120b` (Fallback: OpenRouter `google/gemma-4-31b-it:free`) |
+| `/review <code>` | Correctness check, edge case coverage, refactoring suggestions | Groq: `llama-3.3-70b-versatile` (Fallback: OpenRouter `google/gemma-4-31b-it:free`) |
+| `/visualize <code>` | Mermaid control-flow diagram + variable state trace | Groq: `llama-3.3-70b-versatile` (Fallback: OpenRouter `google/gemma-4-31b-it:free`) |
 
 The hint system is intentionally **progressive** — you can't skip to the answer. Each call unlocks only the next level, preserving the learning value of the struggle.
 

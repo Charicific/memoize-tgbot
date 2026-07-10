@@ -136,18 +136,20 @@ def format_markdown_to_html(text: str) -> str:
         
     escaped = re.sub(r'`([^`\n]+)`', save_inline_code, escaped)
     
-    # 4. Convert bold (**text**)
-    escaped = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', escaped)
+    # 4. Convert bold (**text**) safely
+    escaped = re.sub(r'\*\*([^\s*](?:[^*]*[^\s*])?)\*\*', r'<b>\1</b>', escaped)
     
-    # 5. Convert italic (*text* or _text_)
-    escaped = re.sub(r'\*([^*]+)\*', r'<i>\1</i>', escaped)
-    escaped = re.sub(r'_([^_]+)_', r'<i>\1</i>', escaped)
+    # 5. Convert italic (*text*) safely
+    escaped = re.sub(r'\*([^\s*](?:[^*]*[^\s*])?)\*', r'<i>\1</i>', escaped)
     
-    # 6. Restore inline code wrapped in <code>
+    # 6. Convert italic (_text_) safely
+    escaped = re.sub(r'(?<!\w)_([^\s_](?:[^_]*[^\s_])?)_(?!\w)', r'<i>\1</i>', escaped)
+    
+    # 7. Restore inline code wrapped in <code>
     for i, code_content in enumerate(inline_codes):
         escaped = escaped.replace(f"__INLINE_CODE_{i}__", f"<code>{code_content}</code>")
         
-    # 7. Restore code blocks wrapped in <pre><code>
+    # 8. Restore code blocks wrapped in <pre><code>
     for i, code_content in enumerate(code_blocks):
         escaped = escaped.replace(f"__CODE_BLOCK_{i}__", f"<pre><code>{code_content}</code></pre>")
         
