@@ -109,10 +109,13 @@ class SupabaseDB:
 
                 # Create performance indexes
                 await self.execute("CREATE INDEX IF NOT EXISTS idx_problem_history_solved_at ON problem_history(solved_at);")
+                await self.execute("CREATE INDEX IF NOT EXISTS idx_problem_history_slug ON problem_history(problem_slug);")
+                await self.execute("CREATE INDEX IF NOT EXISTS idx_problem_history_user_solved ON problem_history(telegram_id, solved_at DESC);")
                 await self.execute("CREATE INDEX IF NOT EXISTS idx_srs_reviews_next_date ON srs_reviews(next_review_date);")
                 await self.execute("CREATE INDEX IF NOT EXISTS idx_battles_status ON battles(status);")
                 await self.execute("CREATE INDEX IF NOT EXISTS idx_group_members_id ON group_members(telegram_id);")
                 await self.execute("CREATE INDEX IF NOT EXISTS idx_group_battles_status ON group_battles(status);")
+                await self.execute("CREATE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));")
                 logger.info("Initialized performance database indexes.")
 
                 # Add paused_at and remaining_seconds columns to battles table
@@ -468,7 +471,7 @@ class SupabaseDB:
           AND NOT EXISTS (
               SELECT 1 FROM problem_history ph
               WHERE ph.telegram_id = u.telegram_id
-                AND ph.solved_at::date = CURRENT_DATE
+                AND ph.solved_at >= CURRENT_DATE AND ph.solved_at < CURRENT_DATE + INTERVAL '1 day'
           )
         """
         rows = await self.fetch(query)
@@ -489,7 +492,8 @@ class SupabaseDB:
         FROM daily_challenges dc
         JOIN problem_history ph ON dc.problem_slug = ph.problem_slug
         WHERE ph.telegram_id = $1
-          AND ph.solved_at::date = dc.date
+          AND ph.solved_at >= dc.date
+          AND ph.solved_at < dc.date + INTERVAL '1 day'
         ORDER BY solve_date DESC
         """
         rows = await self.fetch(query, telegram_id)

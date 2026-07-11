@@ -788,7 +788,7 @@ async def trigger_streak_reminder_for_user(user_id: int):
 
         # Check if user already has a solve logged in DB today
         has_solve_logged = await db.fetchrow(
-            "SELECT 1 FROM problem_history WHERE telegram_id = $1 AND solved_at::date = CURRENT_DATE",
+            "SELECT 1 FROM problem_history WHERE telegram_id = $1 AND solved_at >= CURRENT_DATE AND solved_at < CURRENT_DATE + INTERVAL '1 day'",
             user_id,
         )
         if has_solve_logged:
