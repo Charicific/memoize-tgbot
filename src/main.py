@@ -1,5 +1,12 @@
 import asyncio
 import logging
+
+try:
+    import uvloop
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+except ImportError:
+    pass
+
 import datetime
 import traceback
 from typing import Optional, List, Dict, Any
