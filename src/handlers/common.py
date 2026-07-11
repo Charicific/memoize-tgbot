@@ -179,12 +179,7 @@ async def cmd_ping(message: Message):
     tg_latency = int((time.time() - start_tg) * 1000)
 
     # Get Bot Uptime
-    from src.services.uptime_robot import get_uptimerobot_stats
-    ur_stats = await get_uptimerobot_stats()
-    if ur_stats and ur_stats.get("uptime") != "N/A":
-        uptime = ur_stats["uptime"]
-    else:
-        uptime = get_uptime_string()
+    uptime = get_uptime_string()
 
     # Edit message with final metrics
     status_text = (

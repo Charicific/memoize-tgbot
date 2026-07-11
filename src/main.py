@@ -41,7 +41,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize clients
-bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+session = None
+if settings.TELEGRAM_API_SERVER_URL:
+    from aiogram.client.telegram import TelegramAPIServer
+    from aiogram.client.session.aiohttp import AiohttpSession
+    logger.info(f"Using local Telegram Bot API server at {settings.TELEGRAM_API_SERVER_URL}")
+    local_server = TelegramAPIServer.from_base(settings.TELEGRAM_API_SERVER_URL)
+    session = AiohttpSession(api=local_server)
+
+bot = Bot(token=settings.TELEGRAM_BOT_TOKEN, session=session)
 dp = Dispatcher(storage=cache_manager.fsm_storage)
 leetcode_client = LeetCodeClient()
 
