@@ -24,12 +24,12 @@ class LeetCodeClient:
     def __init__(self):
         self.clients = []
         # Main direct connection client
-        self.clients.append(httpx.AsyncClient(timeout=10.0))
+        self.clients.append(httpx.AsyncClient(http2=True, timeout=10.0))
         
         # Initialize additional clients for configured proxies
         for proxy in settings.proxies_list:
             try:
-                client = httpx.AsyncClient(proxies={"all://": proxy}, timeout=10.0)
+                client = httpx.AsyncClient(http2=True, proxies={"all://": proxy}, timeout=10.0)
                 self.clients.append(client)
                 logger.info(f"Initialized proxy client for: {proxy}")
             except Exception as e:

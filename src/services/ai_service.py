@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class AIService:
     def __init__(self):
         # Initialize httpx AsyncClient for calling OpenAI-compatible completions endpoints
-        self.http_client = httpx.AsyncClient(timeout=30.0)
+        self.http_client = httpx.AsyncClient(http2=True, timeout=30.0)
 
     async def call_model(self, command: str, messages: list) -> str:
         """

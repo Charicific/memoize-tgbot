@@ -27,7 +27,7 @@ async def get_uptimerobot_stats() -> Optional[Dict[str, Any]]:
         payload["monitors"] = settings.UPTIMEROBOT_MONITOR_ID
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(http2=True, timeout=5.0) as client:
             response = await client.post(url, json=payload)
             if response.status_code != 200:
                 err_msg = f"HTTP status code {response.status_code}"

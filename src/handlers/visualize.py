@@ -67,7 +67,7 @@ async def cmd_visualize(message: Message, command: CommandObject):
         
         # 3. Download the rendering directly from mermaid.ink to upload it as bytes
         logger.info(f"Downloading flowchart image from: {photo_url}")
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(http2=True, timeout=15.0) as client:
             img_response = await client.get(photo_url)
             img_response.raise_for_status()
             photo_bytes = img_response.content
