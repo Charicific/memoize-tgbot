@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     WEBHOOK_URL: str = ""  # If empty, polling mode is used for local testing
     WEBHOOK_PATH: str = "/webhook"
+    TELEGRAM_API_SERVER_URL: Optional[str] = None
 
     # Battle check frequency (in seconds)
     BATTLE_POLL_INTERVAL: int = 60
