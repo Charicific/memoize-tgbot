@@ -1355,6 +1355,7 @@ async def telegram_webhook(request: Request):
     """
     try:
         update_json = await request.json()
+        logger.info(f"Incoming Webhook Payload: {update_json}")
         update = types.Update.model_validate(update_json, context={"bot": bot})
         await dp.feed_update(bot, update)
         return {"status": "ok"}
