@@ -1230,18 +1230,22 @@ async def lifespan(app: FastAPI):
     allowed_updates = dp.resolve_used_update_types()
 
     # Webhook mode vs Polling mode setup
-    if settings.WEBHOOK_URL:
-        # Register webhook URL
-        webhook_full_url = f"{settings.WEBHOOK_URL.rstrip('/')}{settings.WEBHOOK_PATH}"
-        logger.info(f"Setting webhook to: {webhook_full_url} with allowed_updates={allowed_updates}")
-        await bot.set_webhook(url=webhook_full_url, allowed_updates=allowed_updates, drop_pending_updates=True)
-    else:
-        logger.info(
-            f"No WEBHOOK_URL found. Bot will run in polling mode asynchronously with allowed_updates={allowed_updates}"
-        )
-        await bot.delete_webhook(drop_pending_updates=True)
-        # Run dispatcher polling in the background event loop
-        asyncio.create_task(dp.start_polling(bot, allowed_updates=allowed_updates))
+    cloud_bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+    try:
+        if settings.WEBHOOK_URL:
+            # Register webhook URL
+            webhook_full_url = f"{settings.WEBHOOK_URL.rstrip('/')}{settings.WEBHOOK_PATH}"
+            logger.info(f"Setting webhook to: {webhook_full_url} with allowed_updates={allowed_updates} via Telegram Cloud API")
+            await cloud_bot.set_webhook(url=webhook_full_url, allowed_updates=allowed_updates, drop_pending_updates=True)
+        else:
+            logger.info(
+                f"No WEBHOOK_URL found. Deleting webhook via Telegram Cloud API..."
+            )
+            await cloud_bot.delete_webhook(drop_pending_updates=True)
+            # Run dispatcher polling in the background event loop
+            asyncio.create_task(dp.start_polling(bot, allowed_updates=allowed_updates))
+    finally:
+        await cloud_bot.session.close()
 
     # Setup scheduler jobs
     # Poll all active battles (1v1 and group) every 30 seconds
