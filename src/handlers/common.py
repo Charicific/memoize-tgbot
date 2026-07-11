@@ -173,7 +173,15 @@ async def cmd_ping(message: Message):
     except Exception as e:
         db_latency = f"Error ({e})"
 
-    # Measure Telegram API latency
+    # Measure Local API Gateway response time (using get_me which local server caches/resolves locally)
+    start_local = time.time()
+    try:
+        await message.bot.get_me()
+        local_latency = f"{int((time.time() - start_local) * 1000)}ms"
+    except Exception as e:
+        local_latency = f"Error ({e})"
+
+    # Measure Telegram Cloud round-trip latency (using reply/sendMessage)
     start_tg = time.time()
     sent_msg = await message.reply("🏓 Ponging...")
     tg_latency = int((time.time() - start_tg) * 1000)
@@ -184,7 +192,8 @@ async def cmd_ping(message: Message):
     # Edit message with final metrics
     status_text = (
         f"🏓 {html.bold('Pong!')}\n\n"
-        f"⚡ {html.bold('Telegram Bot API:')} {tg_latency}ms\n"
+        f"⚡ {html.bold('Local API Gateway:')} {local_latency}\n"
+        f"☁️ {html.bold('Telegram Cloud RTT:')} {tg_latency}ms\n"
         f"💾 {html.bold('Database Latency:')} {db_latency}\n"
         f"⏰ {html.bold('Bot Uptime:')} {uptime}"
     )
