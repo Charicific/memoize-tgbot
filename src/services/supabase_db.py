@@ -3,12 +3,21 @@ import datetime
 from typing import Optional, List, Dict, Any
 import asyncpg
 from src.config import settings
+import json
+from cachetools import TTLCache
+from src.services.redis_cache import cache_manager
 
 logger = logging.getLogger(__name__)
 
 class SupabaseDB:
     def __init__(self):
         self.pool: Optional[asyncpg.Pool] = None
+        # Store up to 1024 objects locally in RAM with short 60s expirations
+        self.l1_settings_cache = TTLCache(maxsize=1024, ttl=60)
+        self.l1_profile_cache = TTLCache(maxsize=1024, ttl=60)
+        self.l1_mute_cache = TTLCache(maxsize=1024, ttl=60)
+        self.l1_link_cache = TTLCache(maxsize=1024, ttl=300)
+
 
     async def connect(self):
         if not self.pool:
@@ -179,8 +188,40 @@ class SupabaseDB:
 
     # --- Users ---
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
+        cache_key = f"cache:user:profile:{telegram_id}"
+        
+        # 1. L1 RAM Cache Hit
+        if cache_key in self.l1_profile_cache:
+            return self.l1_profile_cache[cache_key]
+
+        # 2. L2 Redis Cache Hit
+        try:
+            cached_data = await cache_manager.get(cache_key)
+            if cached_data:
+                if cached_data == "__none__":
+                    self.l1_profile_cache[cache_key] = None
+                    return None
+                user_dict = json.loads(cached_data)
+                self.l1_profile_cache[cache_key] = user_dict
+                return user_dict
+        except Exception as e:
+            logger.error(f"Redis L2 cache read error in get_user: {e}")
+
+        # 3. Cache Miss -> Query PostgreSQL DB
         row = await self.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
-        return dict(row) if row else None
+        user_dict = dict(row) if row else None
+
+        # 4. Save to both L1 RAM and L2 Redis
+        self.l1_profile_cache[cache_key] = user_dict
+        try:
+            if user_dict:
+                await cache_manager.set(cache_key, json.dumps(user_dict, default=str), ex=3600)  # L2 TTL: 1 hour
+            else:
+                await cache_manager.set(cache_key, "__none__", ex=300)  # Negative cache L2 TTL: 5 minutes
+        except Exception as e:
+            logger.error(f"Redis L2 cache write error in get_user: {e}")
+
+        return user_dict
 
     async def create_user(self, telegram_id: int, username: Optional[str], first_name: Optional[str]) -> Dict[str, Any]:
         # Safety net: never record Telegram's service account
@@ -194,7 +235,18 @@ class SupabaseDB:
         RETURNING *
         """
         row = await self.fetchrow(query, telegram_id, username, first_name)
-        return dict(row)
+        user_dict = dict(row) if row else {}
+        
+        # Invalidate cache
+        if user_dict:
+            cache_key = f"cache:user:profile:{telegram_id}"
+            self.l1_profile_cache.pop(cache_key, None)
+            try:
+                await cache_manager.delete(cache_key)
+            except Exception as e:
+                logger.error(f"Failed to invalidate user cache key {cache_key} in create_user: {e}")
+                
+        return user_dict
 
     async def add_xp_coins(self, telegram_id: int, xp: int, coins: int) -> Optional[Dict[str, Any]]:
         query = """
@@ -206,8 +258,13 @@ class SupabaseDB:
         """
         row = await self.fetchrow(query, telegram_id, xp, coins)
         if row:
+            cache_key = f"cache:user:profile:{telegram_id}"
+            # Invalidate L1 cache
+            self.l1_profile_cache.pop(cache_key, None)
             try:
-                from src.services.redis_cache import cache_manager
+                # Invalidate user profile L2 cache
+                await cache_manager.delete(cache_key)
+                
                 # Invalidate global leaderboard cache
                 await cache_manager.delete("global_leaderboard")
                 
@@ -216,13 +273,45 @@ class SupabaseDB:
                 for g in groups:
                     await cache_manager.delete(f"group_leaderboard:{g['group_id']}")
             except Exception as e:
-                logger.error(f"Error invalidating leaderboard cache in add_xp_coins: {e}")
+                logger.error(f"Error invalidating cache in add_xp_coins: {e}")
         return dict(row) if row else None
 
     # --- Linked Accounts ---
     async def get_linked_account(self, telegram_id: int) -> Optional[Dict[str, Any]]:
+        cache_key = f"cache:linked_account:{telegram_id}"
+        
+        # 1. L1 RAM Cache Hit
+        if cache_key in self.l1_link_cache:
+            return self.l1_link_cache[cache_key]
+
+        # 2. L2 Redis Cache Hit
+        try:
+            cached_data = await cache_manager.get(cache_key)
+            if cached_data:
+                if cached_data == "__none__":
+                    self.l1_link_cache[cache_key] = None
+                    return None
+                link_dict = json.loads(cached_data)
+                self.l1_link_cache[cache_key] = link_dict
+                return link_dict
+        except Exception as e:
+            logger.error(f"Redis L2 cache read error in get_linked_account: {e}")
+
+        # 3. Cache Miss -> Query PostgreSQL DB
         row = await self.fetchrow("SELECT * FROM linked_accounts WHERE telegram_id = $1", telegram_id)
-        return dict(row) if row else None
+        link_dict = dict(row) if row else None
+
+        # 4. Save to both L1 RAM and L2 Redis
+        self.l1_link_cache[cache_key] = link_dict
+        try:
+            if link_dict:
+                await cache_manager.set(cache_key, json.dumps(link_dict, default=str), ex=3600)  # L2 TTL: 1 hour
+            else:
+                await cache_manager.set(cache_key, "__none__", ex=300)  # Negative cache L2 TTL: 5 minutes
+        except Exception as e:
+            logger.error(f"Redis L2 cache write error in get_linked_account: {e}")
+
+        return link_dict
 
     async def get_verified_links_for_users(self, telegram_ids: List[int]) -> Dict[int, str]:
         if not telegram_ids:
@@ -248,7 +337,18 @@ class SupabaseDB:
         RETURNING *
         """
         row = await self.fetchrow(query, telegram_id, leetcode_username, verification_code)
-        return dict(row)
+        link_dict = dict(row) if row else {}
+        
+        # Invalidate cache
+        if link_dict:
+            cache_key = f"cache:linked_account:{telegram_id}"
+            self.l1_link_cache.pop(cache_key, None)
+            try:
+                await cache_manager.delete(cache_key)
+            except Exception as e:
+                logger.error(f"Failed to invalidate linked account cache key {cache_key} in link_leetcode_account: {e}")
+                
+        return link_dict
 
     async def verify_leetcode_account(self, telegram_id: int) -> bool:
         query = """
@@ -258,7 +358,17 @@ class SupabaseDB:
         RETURNING verified
         """
         row = await self.fetchrow(query, telegram_id)
-        return row["verified"] if row else False
+        verified = row["verified"] if row else False
+        
+        # Invalidate cache
+        cache_key = f"cache:linked_account:{telegram_id}"
+        self.l1_link_cache.pop(cache_key, None)
+        try:
+            await cache_manager.delete(cache_key)
+        except Exception as e:
+            logger.error(f"Failed to invalidate linked account cache key {cache_key} in verify_leetcode_account: {e}")
+            
+        return verified
 
     # --- Problem History ---
     async def record_solved_problem(self, telegram_id: int, problem_slug: str, problem_title: str, difficulty: str) -> bool:
@@ -438,7 +548,6 @@ class SupabaseDB:
         return [dict(r) for r in rows]
 
 
-    # --- Reminder Settings ---
     async def update_reminder_setting(self, telegram_id: int, setting_name: str, value: bool) -> Optional[Dict[str, Any]]:
         if setting_name not in ["remind_daily", "remind_streak", "remind_contests"]:
             raise ValueError(f"Invalid setting name: {setting_name}")
@@ -450,6 +559,15 @@ class SupabaseDB:
         RETURNING *
         """
         row = await self.fetchrow(query, telegram_id, value)
+        
+        # Invalidate cache
+        cache_key = f"cache:user:profile:{telegram_id}"
+        self.l1_profile_cache.pop(cache_key, None)
+        try:
+            await cache_manager.delete(cache_key)
+        except Exception as e:
+            logger.error(f"Failed to invalidate L2 user cache key {cache_key} in update_reminder_setting: {e}")
+            
         return dict(row) if row else None
 
     async def get_users_with_daily_reminders(self) -> List[int]:
@@ -501,11 +619,43 @@ class SupabaseDB:
 
     # --- Group Settings & Battle Mutes ---
     async def get_group_setting(self, group_id: int, setting_name: str) -> Optional[str]:
+        cache_key = f"cache:group:settings:{group_id}:{setting_name}"
+        
+        # 1. L1 RAM Cache Hit (Fastest)
+        if cache_key in self.l1_settings_cache:
+            return self.l1_settings_cache[cache_key]
+
+        # 2. L2 Redis Cache Hit
+        try:
+            cached_value = await cache_manager.get(cache_key)
+            if cached_value is not None:
+                if cached_value == "__none__":
+                    self.l1_settings_cache[cache_key] = None
+                    return None
+                # Store in L1 RAM cache before returning
+                self.l1_settings_cache[cache_key] = cached_value
+                return cached_value
+        except Exception as e:
+            logger.error(f"Redis L2 cache read error in get_group_setting: {e}")
+
+        # 3. L1/L2 Cache Miss -> Query PostgreSQL DB
         row = await self.fetchrow(
             "SELECT setting_value FROM group_settings WHERE group_id = $1 AND setting_name = $2",
             group_id, setting_name
         )
-        return row["setting_value"] if row else None
+        val = row["setting_value"] if row else None
+
+        # 4. Save to both L1 RAM and L2 Redis
+        self.l1_settings_cache[cache_key] = val
+        try:
+            if val is not None:
+                await cache_manager.set(cache_key, val, ex=600)  # L2 TTL: 10 mins
+            else:
+                await cache_manager.set(cache_key, "__none__", ex=300)  # Negative cache L2 TTL: 5 minutes
+        except Exception as e:
+            logger.error(f"Redis L2 cache write error in get_group_setting: {e}")
+                
+        return val
 
     async def set_group_setting(self, group_id: int, setting_name: str, setting_value: str):
         query = """
@@ -515,6 +665,17 @@ class SupabaseDB:
         DO UPDATE SET setting_value = EXCLUDED.setting_value
         """
         await self.execute(query, group_id, setting_name, setting_value)
+        
+        cache_key = f"cache:group:settings:{group_id}:{setting_name}"
+        
+        # Invalidate L1 Cache (RAM)
+        self.l1_settings_cache.pop(cache_key, None)
+        
+        # Invalidate L2 Cache (Redis)
+        try:
+            await cache_manager.delete(cache_key)
+        except Exception as e:
+            logger.error(f"Failed to invalidate L2 cache key {cache_key}: {e}")
 
     async def mute_group_battle(self, group_id: int, telegram_id: int, mute: bool):
         if mute:
@@ -527,13 +688,50 @@ class SupabaseDB:
                 "DELETE FROM group_battle_mutes WHERE group_id = $1 AND telegram_id = $2",
                 group_id, telegram_id
             )
+            
+        cache_key = f"cache:group:mute:{group_id}:{telegram_id}"
+        
+        # Invalidate L1 RAM
+        self.l1_mute_cache.pop(cache_key, None)
+        
+        # Invalidate L2 Redis
+        try:
+            await cache_manager.delete(cache_key)
+        except Exception as e:
+            logger.error(f"Failed to invalidate L2 cache key {cache_key} in mute_group_battle: {e}")
 
     async def is_group_battle_muted(self, group_id: int, telegram_id: int) -> bool:
+        cache_key = f"cache:group:mute:{group_id}:{telegram_id}"
+        
+        # 1. L1 RAM Cache Hit
+        if cache_key in self.l1_mute_cache:
+            return self.l1_mute_cache[cache_key] == '1'
+
+        # 2. L2 Redis Cache Hit
+        try:
+            cached_val = await cache_manager.get(cache_key)
+            if cached_val is not None:
+                self.l1_mute_cache[cache_key] = cached_val
+                return cached_val == '1'
+        except Exception as e:
+            logger.error(f"Redis L2 cache read error in is_group_battle_muted: {e}")
+
+        # 3. Cache Miss -> Query PostgreSQL DB
         row = await self.fetchrow(
             "SELECT 1 FROM group_battle_mutes WHERE group_id = $1 AND telegram_id = $2",
             group_id, telegram_id
         )
-        return row is not None
+        muted = row is not None
+        val_str = '1' if muted else '0'
+
+        # 4. Save to both L1 RAM and L2 Redis
+        self.l1_mute_cache[cache_key] = val_str
+        try:
+            await cache_manager.set(cache_key, val_str, ex=600)  # L2 TTL: 10 mins
+        except Exception as e:
+            logger.error(f"Redis L2 cache write error in is_group_battle_muted: {e}")
+            
+        return muted
 
     async def clear_group_history(self, group_id: int):
         await self.execute("DELETE FROM group_members WHERE group_id = $1", group_id)
