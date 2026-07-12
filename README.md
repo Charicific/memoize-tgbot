@@ -289,12 +289,20 @@ The bot runs as a containerized **FastAPI + aiogram** application. All component
 | Bot Framework | [aiogram 3](https://docs.aiogram.dev/) | Async Telegram bot framework |
 | Web Server | FastAPI + Uvicorn | Webhook endpoint & health check |
 | Database | Supabase (PostgreSQL) | Persistent storage via asyncpg |
-| Cache & FSM | Upstash Redis | Bot state, rate limits, role cache |
+| Cache & FSM | `cachetools` (L1) + Upstash Redis (L2) | Dual-tier hybrid cache-aside layer & bot FSM state |
 | LeetCode Data | LeetCode GraphQL API | Problem fetch, submission polling |
 | AI — Hints & Analysis | Groq (openai/gpt-oss-120b) | Fast inference for hints & complexity |
 | AI — Review & Visualize | NVIDIA Build (Qwen-3 / DeepSeek-V3) | Deep code review and flowchart visualization |
 | Background Jobs | APScheduler | Cron-style persistent scheduled tasks |
 | Deployment | Koyeb (Docker) | Containerized cloud hosting |
+
+### Hybrid Caching (L1/L2 Cache-Aside)
+
+To avoid database connection bottlenecking and network latency overhead:
+1. **L1 RAM Cache:** Short-term (60s - 5m) local `TTLCache` in the python application process. Delivers instantaneous `0.001ms` lookups for hot keys (settings, user mutes, links, roles).
+2. **L2 Shared Cache:** Upstash Redis is queried on L1 cache misses to avoid querying PostgreSQL directly (~2ms - 5ms network lookup).
+3. **Negative Caching:** Cache misses (e.g. checking ban status or profiles for unregistered users) are cached using `__none__` sentinels for 5 minutes, protecting Supabase from high-concurrency group chat traffic.
+4. **Auto-Eviction / Write-Through:** Cache keys are automatically invalidated on any user profile updates, settings changes, or mutes.
 
 ---
 

@@ -397,6 +397,14 @@ Interfaces Groq and Gemini APIs to support the AI Coaching features.
 * **`analyze_complexity` (Groq - Llama 3.3 70B):** Performs Big-O time and space complexity evaluations on code submissions.
 * **`generate_code_review` (Gemini Flash 2.0):** Reviews structural correctness, identifies edge cases, evaluates readability, and provides refactored optimizations.
 
+### `SupabaseDB` ([src/services/supabase_db.py](file:///d:/Ongoing_projects/memoize-tgbot/src/services/supabase_db.py))
+Handles database queries and schema setup using raw asynchronous queries via an `asyncpg` pool.
+* **Hybrid L1/L2 Cache-Aside Pipeline:** Integrates cache-aside logic directly within core read methods (`get_user`, `get_group_setting`, `get_linked_account`, `is_group_battle_muted`).
+  * **L1 Cache (RAM):** Memory-bound `TTLCache` in the python process container. Delivers instantaneous `0.001ms` local hot-key reads.
+  * **L2 Cache (Shared Redis):** Upstash Redis acts as a network fallback on L1 cache misses (~2ms - 5ms).
+* **Negative Caching (Cache Miss Protection):** Caches key misses (e.g. checking ban status or profiles for unregistered users) using a `"__none__"` sentinel string in Redis for 5 minutes. This prevents database query flooding when unregistered users participate in active group chats (which triggers role/ban middleware checks).
+* **Write Auto-Invalidation:** Operations that update or modify data (`create_user`, `add_xp_coins`, `set_group_setting`, `update_reminder_setting`, `mute_group_battle`, `link_leetcode_account`, `verify_leetcode_account`) automatically pop/delete the corresponding L1 and L2 cache keys to ensure data consistency.
+
 ---
 
 ## 8. Command Dictionary (37 Commands)
