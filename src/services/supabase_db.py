@@ -476,6 +476,16 @@ class SupabaseDB:
 
     # --- Leaderboards ---
     async def get_global_leaderboard(self, limit: int = 10) -> List[Dict[str, Any]]:
+        cache_key = "global_leaderboard" if limit == 10 else None
+        
+        if cache_key:
+            try:
+                cached = await cache_manager.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except Exception as e:
+                logger.error(f"Redis L2 cache read error in get_global_leaderboard: {e}")
+
         query = """
         SELECT telegram_id, username, first_name, xp, level, coins
         FROM users
@@ -483,7 +493,15 @@ class SupabaseDB:
         LIMIT $1
         """
         rows = await self.fetch(query, limit)
-        return [dict(r) for r in rows]
+        leaderboard = [dict(r) for r in rows]
+
+        if cache_key and leaderboard:
+            try:
+                await cache_manager.set(cache_key, json.dumps(leaderboard, default=str), ex=3600)  # L2 TTL: 1 hour
+            except Exception as e:
+                logger.error(f"Redis L2 cache write error in get_global_leaderboard: {e}")
+
+        return leaderboard
 
     # --- System Stats ---
     async def get_bot_stats(self) -> Dict[str, int]:
@@ -536,6 +554,16 @@ class SupabaseDB:
         await self.execute(query, group_id, telegram_id)
 
     async def get_group_leaderboard(self, group_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+        cache_key = f"group_leaderboard:{group_id}" if limit == 10 else None
+        
+        if cache_key:
+            try:
+                cached = await cache_manager.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except Exception as e:
+                logger.error(f"Redis L2 cache read error in get_group_leaderboard: {e}")
+
         query = """
         SELECT u.telegram_id, u.username, u.first_name, u.xp, u.level, u.coins
         FROM users u
@@ -545,7 +573,15 @@ class SupabaseDB:
         LIMIT $2
         """
         rows = await self.fetch(query, group_id, limit)
-        return [dict(r) for r in rows]
+        leaderboard = [dict(r) for r in rows]
+
+        if cache_key and leaderboard:
+            try:
+                await cache_manager.set(cache_key, json.dumps(leaderboard, default=str), ex=3600)  # L2 TTL: 1 hour
+            except Exception as e:
+                logger.error(f"Redis L2 cache write error in get_group_leaderboard: {e}")
+
+        return leaderboard
 
 
     async def update_reminder_setting(self, telegram_id: int, setting_name: str, value: bool) -> Optional[Dict[str, Any]]:

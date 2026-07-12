@@ -109,21 +109,34 @@ def stable_hash(s: str) -> int:
 class UnifiedPollingCache:
     def __init__(self):
         self.submissions = {}
-        self.lock = asyncio.Lock()
+        self.tasks = {}
 
     async def get_submissions(self, username: str) -> List[Dict[str, Any]]:
-        async with self.lock:
-            if username in self.submissions:
-                return self.submissions[username]
-            try:
-                await asyncio.sleep(0.1)
-                subs = await leetcode_client.get_recent_accepted_submissions(username, limit=5)
-                self.submissions[username] = subs
-                return subs
-            except Exception as e:
-                logger.error(f"Error fetching submissions for {username}: {e}")
-                self.submissions[username] = []
-                return []
+        if username in self.submissions:
+            return self.submissions[username]
+        
+        # If there is already an active fetch task for this user, wait for it
+        if username in self.tasks:
+            return await self.tasks[username]
+            
+        # Otherwise, start a new fetch task
+        task = asyncio.create_task(self._fetch(username))
+        self.tasks[username] = task
+        try:
+            return await task
+        finally:
+            self.tasks.pop(username, None)
+
+    async def _fetch(self, username: str) -> List[Dict[str, Any]]:
+        try:
+            await asyncio.sleep(0.1) # Small rate-limit/jitter gap
+            subs = await leetcode_client.get_recent_accepted_submissions(username, limit=5)
+            self.submissions[username] = subs
+            return subs
+        except Exception as e:
+            logger.error(f"Error fetching submissions for {username}: {e}")
+            self.submissions[username] = []
+            return []
 
 
 async def poll_all_active_battles():

@@ -45,6 +45,14 @@ async def cmd_setrole(message: Message, command: CommandObject):
     # Update role in DB
     await db.execute("UPDATE users SET role = $1 WHERE telegram_id = $2", new_role, target_user_id)
 
+    # Invalidate user profile cache (both L1 RAM and L2 Redis)
+    cache_key = f"cache:user:profile:{target_user_id}"
+    db.l1_profile_cache.pop(cache_key, None)
+    try:
+        await cache_manager.delete(cache_key)
+    except Exception as e:
+        logger.error(f"Failed to invalidate user cache key {cache_key} in setrole: {e}")
+
     # Invalidate Redis role cache for all chats containing the user
     try:
         keys = await cache_manager.client.keys(f"user:role:*:{target_user_id}")
@@ -303,6 +311,14 @@ async def cmd_pban(message: Message, command: CommandObject):
     # Update DB
     await db.execute("UPDATE users SET is_banned = TRUE WHERE telegram_id = $1", target_id)
 
+    # Invalidate user profile cache (both L1 RAM and L2 Redis)
+    profile_cache_key = f"cache:user:profile:{target_id}"
+    db.l1_profile_cache.pop(profile_cache_key, None)
+    try:
+        await cache_manager.delete(profile_cache_key)
+    except Exception as e:
+        logger.error(f"Failed to invalidate user cache key {profile_cache_key} in pban: {e}")
+
     # Set banned cache in Redis
     cache_key = f"user:banned:{target_id}"
     await cache_manager.set(cache_key, "1", expire_seconds=86400 * 365) # cache for 1 year
@@ -354,6 +370,14 @@ async def cmd_unpban(message: Message, command: CommandObject):
 
     # Update DB
     await db.execute("UPDATE users SET is_banned = FALSE WHERE telegram_id = $1", target_id)
+
+    # Invalidate user profile cache (both L1 RAM and L2 Redis)
+    profile_cache_key = f"cache:user:profile:{target_id}"
+    db.l1_profile_cache.pop(profile_cache_key, None)
+    try:
+        await cache_manager.delete(profile_cache_key)
+    except Exception as e:
+        logger.error(f"Failed to invalidate user cache key {profile_cache_key} in unpban: {e}")
 
     # Evict cache key
     cache_key = f"user:banned:{target_id}"

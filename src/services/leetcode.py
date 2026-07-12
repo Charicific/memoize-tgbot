@@ -3,6 +3,7 @@ import random
 import httpx
 import difflib
 from typing import Optional, Dict, List, Any
+from cachetools import TTLCache
 from groq import AsyncGroq
 from src.config import settings
 
@@ -22,6 +23,8 @@ class LeetCodeClient:
     ]
 
     def __init__(self):
+        # Store up to 4096 problem detail objects in RAM for 24 hours (86400 seconds)
+        self.l1_problem_details = TTLCache(maxsize=4096, ttl=86400)
         self.clients = []
         # Main direct connection client
         self.clients.append(httpx.AsyncClient(http2=True, timeout=10.0))
@@ -199,14 +202,22 @@ class LeetCodeClient:
         """
         Fetches problem description, difficulties, topic tags, and code snippets.
         """
+        # 1. L1 RAM Cache Hit (Fastest)
+        if title_slug in self.l1_problem_details:
+            return self.l1_problem_details[title_slug]
+
+        # 2. L2 Redis Cache Hit
         try:
             from src.services.redis_cache import cache_manager
             cached = await cache_manager.get(f"problem_details:{title_slug}")
             if cached and isinstance(cached, dict):
+                # Save to L1 RAM before returning
+                self.l1_problem_details[title_slug] = cached
                 return cached
         except Exception as e:
             logger.error(f"Error reading problem_details cache for {title_slug}: {e}")
 
+        # 3. L1/L2 Cache Miss -> Query LeetCode GraphQL API
         query = """
         query questionData($titleSlug: String!) {
           question(titleSlug: $titleSlug) {
@@ -233,9 +244,12 @@ class LeetCodeClient:
             return None
         
         details = data["question"]
+        
+        # 4. Save to both L1 RAM and L2 Redis
+        self.l1_problem_details[title_slug] = details
         try:
             from src.services.redis_cache import cache_manager
-            await cache_manager.set(f"problem_details:{title_slug}", details, expire_seconds=604800)
+            await cache_manager.set(f"problem_details:{title_slug}", details, expire_seconds=604800)  # L2 TTL: 7 days
         except Exception as e:
             logger.error(f"Error writing problem_details cache for {title_slug}: {e}")
 
